@@ -255,7 +255,34 @@ func (fs *FileSystem) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, er
 }
 
 func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
-	return fmt.Errorf("not implemented")
+	logger.Infof("准备新建文件夹: %s", name)
+	name = fs.resolve(name)
+
+	parentFolderName := path.Dir(name)
+	parentFolder, err := fs.getFile(ctx, parentFolderName)
+	if err != nil {
+		logger.Errorf("新建文件夹失败, err: %v, name: %s", err, name)
+		return err
+	}
+
+	reqBody := map[string]string{
+		"drive_id":        fs.fileDriveId,
+		"name":            path.Base(name),
+		"type":            "folder",
+		"parent_file_id":  parentFolder.FileId,
+		"check_name_mode": "refuse",
+	}
+
+	respBody := File{}
+	_, err = fs.request("/v2/file/create", reqBody, &respBody)
+	if err != nil {
+		logger.Errorf("新建文件夹失败, err: %v, name: %s", err, name)
+		return err
+	}
+
+	fs.fileCache.Add(name, &respBody, 0)
+	logger.Infof("新建文件夹成功: %s", name)
+	return nil
 }
 
 func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
@@ -267,11 +294,95 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 }
 
 func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
-	return fmt.Errorf("not implemented")
+	logger.Infof("准备删除文件: %s", name)
+
+	file, err := fs.getFile(ctx, name)
+	if err != nil {
+		logger.Errorf("删除文件失败, name: %s, err: %v", name, err)
+		return err
+	}
+
+	if file.FileId == "root" {
+		return fmt.Errorf("cannot remove root folder")
+	}
+
+	reqBody := map[string]string{
+		"drive_id": fs.fileDriveId,
+		"file_id":  file.FileId,
+	}
+
+	respBody := EmptyStruct{}
+	_, err = fs.request("/v2/recyclebin/trash", reqBody, &respBody)
+	if err != nil {
+		logger.Errorf("删除文件失败, name: %s, err: %v", name, err)
+		return err
+	}
+
+	logger.Infof("删除文件成功: %s", name)
+	return nil
+}
+
+func (fs *FileSystem) moveFile(fileId string, newParentFolderId string, newFileName string) error {
+	reqBody := map[string]interface{}{
+		"drive_id":          fs.fileDriveId,
+		"file_id":           fileId,
+		"check_name_mode":   "refuse",
+		"overwrite":         false,
+		"to_parent_file_id": newParentFolderId,
+		"new_name":          newFileName,
+	}
+	respBody := EmptyStruct{}
+	_, err := fs.request("/v2/file/move", reqBody, &respBody)
+	return err
+}
+
+func (fs *FileSystem) updateFileName(fileId string, newFileName string) error {
+	reqBody := map[string]interface{}{
+		"drive_id": fs.fileDriveId,
+		"file_id":  fileId,
+		"name":     newFileName,
+	}
+	respBody := EmptyStruct{}
+	_, err := fs.request("/v2/file/update", reqBody, &respBody)
+	return err
 }
 
 func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error {
-	return fmt.Errorf("not implemented")
+	logger.Infof("准备移动文件(夹) '%s' 到 '%s'", oldName, newName)
+	oldName = fs.resolve(oldName)
+	newName = fs.resolve(newName)
+
+	sourceFile, err := fs.getFile(ctx, oldName)
+	if err != nil {
+		logger.Errorf("移动文件(夹) '%s' 到 '%s' 失败: 获取原文件失败 %v", oldName, newName, err)
+		return err
+	}
+
+	newFolder := path.Dir(newName)
+	newFileName := path.Base(newName)
+
+	if path.Dir(oldName) == newFolder {
+		err := fs.updateFileName(sourceFile.FileId, newFileName)
+		if err != nil {
+			logger.Errorf("移动文件(夹) '%s' 到 '%s' 失败: 移动失败 %v", oldName, newName, err)
+			return err
+		}
+	} else {
+		newParentFolder, err := fs.getFile(ctx, newFolder)
+		if err != nil {
+			logger.Errorf("移动文件(夹) '%s' 到 '%s' 失败: 获取目的父文件夹失败 %v", oldName, newName, err)
+			return err
+		}
+
+		err = fs.moveFile(sourceFile.FileId, newParentFolder.FileId, newFileName)
+		if err != nil {
+			logger.Errorf("移动文件(夹) '%s' 到 '%s' 失败: 移动失败 %v", oldName, newName, err)
+			return err
+		}
+	}
+
+	logger.Infof("移动文件(夹) '%s' 到 '%s' 成功", oldName, newName)
+	return nil
 }
 
 func (fs *FileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
