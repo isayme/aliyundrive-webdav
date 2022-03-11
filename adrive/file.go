@@ -1,14 +1,13 @@
 package adrive
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/fs"
+	"sync"
 	"time"
 
-	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
 )
 
@@ -23,10 +22,32 @@ type File struct {
 	fs           *FileSystem
 	downloadInfo *GetFileDownloadUrlResp
 	pos          int64
-	rb           *bytes.Buffer
+
+	lock   sync.Mutex
+	reader io.ReadCloser
+}
+
+func (f *File) Clone() *File {
+	return &File{
+		FileName:     f.FileName,
+		FileSize:     f.FileSize,
+		UpdatedAt:    f.UpdatedAt,
+		Type:         f.Type,
+		FileId:       f.FileId,
+		ParentFileId: f.ParentFileId,
+		fs:           f.fs,
+	}
 }
 
 func (f *File) Close() error {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if f.reader != nil {
+		f.reader.Close()
+		f.reader = nil
+	}
+
 	return nil
 }
 
@@ -38,9 +59,7 @@ func (f *File) getDownloadUrl() (string, error) {
 	if f.downloadInfo == nil || time.Now().After(f.downloadInfo.Expiration) {
 		result, err := f.fs.getDownloadUrl(f.FileId)
 		if err != nil || result.Url == "" {
-			logger.Errorf("get download url fail, err: %v", err)
-		}
-		if err != nil {
+			logger.Errorf("获取下载地址失败, err: %v", err)
 			return "", err
 		}
 		f.downloadInfo = result
@@ -50,16 +69,11 @@ func (f *File) getDownloadUrl() (string, error) {
 }
 
 func (f *File) Read(p []byte) (n int, err error) {
-	if f.rb == nil {
-		f.rb = bytes.NewBuffer(nil)
-	}
+	f.lock.Lock()
+	defer f.lock.Unlock()
 
-	if f.rb.Len() > 0 {
-		return f.rb.Read(p)
-	}
-
-	if f.pos >= f.FileSize {
-		return 0, io.EOF
+	if f.reader != nil {
+		return f.reader.Read(p)
 	}
 
 	url, err := f.getDownloadUrl()
@@ -67,8 +81,7 @@ func (f *File) Read(p []byte) (n int, err error) {
 		return 0, err
 	}
 
-	readLen := util.Max(len(p), 1024)
-	headerRange := fmt.Sprintf("bytes=%d-%d", f.pos, f.pos+int64(readLen)-1)
+	headerRange := fmt.Sprintf("bytes=%d-", f.pos)
 	headers := map[string]string{
 		"Range":   headerRange,
 		"Referer": ALIYUNDRIVE_HOST,
@@ -77,30 +90,26 @@ func (f *File) Read(p []byte) (n int, err error) {
 
 	resp, err := client.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(url)
 	if err != nil {
-		logger.Warnf("read file fail: %v", err)
+		logger.Warnf("下载文件失败: %v", err)
+		return 0, err
+	}
+	rawBody := resp.RawBody()
+
+	if resp.StatusCode() >= 300 {
+		bs, err := io.ReadAll(rawBody)
+		logger.Warnf("下载文件失败, err: %v, body: %s", err, string(bs))
 		return 0, err
 	}
 
-	rawBody := resp.RawBody()
-	defer rawBody.Close()
+	f.reader = rawBody
 
-	bs, err := io.ReadAll(rawBody)
-	if err != nil {
-		return 0, nil
-	}
-
-	statusCode := resp.StatusCode()
-	if statusCode >= 300 {
-		logger.Warnf("read file fail: %s", string(bs))
-		return 0, fmt.Errorf("read file fail")
-	}
-
-	f.rb.Write(bs)
-	f.pos += int64(len(bs))
-	return f.rb.Read(p)
+	return f.reader.Read(p)
 }
 
 func (f *File) Seek(offset int64, whence int) (int64, error) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
 	pos := f.pos
 
 	switch whence {
@@ -115,7 +124,10 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	f.pos = pos
-	f.rb = nil
+	if f.reader != nil {
+		f.reader.Close()
+		f.reader = nil
+	}
 	return f.pos, nil
 }
 

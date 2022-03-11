@@ -47,7 +47,7 @@ type FileSystem struct {
 func NewFileSystem(refreshToken string) (*FileSystem, error) {
 	fs := &FileSystem{
 		refreshToken: refreshToken,
-		fileCache:    cache.New(time.Second*3, time.Second),
+		fileCache:    cache.New(time.Second*10, time.Second),
 	}
 
 	err := fs.doRefreshToken()
@@ -201,7 +201,8 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 	name = fs.resolve(name)
 
 	if v, ok := fs.fileCache.Get(name); ok {
-		return v.(*File), nil
+		file := v.(*File)
+		return file.Clone(), nil
 	}
 
 	if name == "" || name == "/" {
@@ -219,7 +220,7 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 
 	respBody := File{}
 	errResp, err := fs.request("/v2/file/get_by_path", reqBody, &respBody)
-	if err != nil && errResp.Code == "NotFound.File" {
+	if err != nil && errResp != nil && errResp.Code == "NotFound.File" {
 		return nil, syscall.ENOENT
 	}
 
