@@ -12,3 +12,19 @@
 - [x] 新建文件夹
 - [x] 文件删除(放到阿里云盘回收站)
 - [ ] 文件上传
+
+# 如何使用
+
+## Docker Compose
+
+```
+version: '3'
+
+services:
+  aliyundrive-webdav:
+    container_name: aliyundrive-webdav
+    image: isayme/aliyundrive-webdav:latest
+    command: /app/aliyundrive-webdav --refresh_token='YOUR REFRESH TOKEN'
+    ports:
+      - '8080:8080'
+```
