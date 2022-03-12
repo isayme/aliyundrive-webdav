@@ -30,23 +30,24 @@ var rootCmd = &cobra.Command{
 			os.Exit(0)
 		}
 
+		logger.SetFormat("console")
 		logger.SetLevel(logLevel)
 
 		fs, err := adrive.NewFileSystem("TODO: your refresh_token")
 		if err != nil {
-			logger.Errorf("create adrive fs faild, err: %v", err)
+			logger.Errorf("初始化失败: %v", err)
 			return
 		}
 
 		address := fmt.Sprintf(":%d", listenPort)
-		logger.Infow("start listen ...", "addr", address)
+		logger.Infof("服务已启动, 端口: %d ", listenPort)
 
 		err = http.ListenAndServe(address, &webdav.Handler{
 			FileSystem: fs,
 			LockSystem: webdav.NewMemLS(),
 		})
 		if err != nil {
-			logger.Errorf("ListenAndServe fail: %v", err)
+			logger.Errorf("启动失败: %v", err)
 		}
 	},
 }
