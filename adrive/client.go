@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -24,21 +25,49 @@ type AdriveClient struct {
 const ALIYUNDRIVE_API_HOST = "https://api.aliyundrive.com"
 const ALIYUNDRIVE_HOST = "https://www.aliyundrive.com/"
 
-var client = resty.New().SetPreRequestHook(func(client *resty.Client, request *http.Request) error {
-	if request.Header.Get("Content-Type") == "[ignore]" {
-		request.Header.Del("Content-Type")
-	}
+var client *resty.Client
 
-	if request.Header.Get("Host") == "" {
-		request.Header.Add("Host", request.URL.Host)
-	}
+func init() {
+	client = resty.New()
+	client.SetRetryCount(3)
+	client.SetRetryAfter(func(c *resty.Client, resp *resty.Response) (time.Duration, error) {
+		URL, _ := url.Parse(resp.Request.URL)
 
-	if request.Header.Get("Referer") == "" {
-		request.Header.Add("Referer", ALIYUNDRIVE_HOST)
-	}
+		statusCode := resp.StatusCode()
+		if statusCode == 429 {
+			logger.Warnf("请求接口 '%s' 遇到限流, 1秒后重试", URL.Path)
+			return time.Second, nil
+		}
 
-	return nil
-})
+		logger.Warnf("请求接口 '%s' 遇到限流, 100毫秒后重试", URL.Path)
+		return time.Millisecond * 100, nil
+	})
+
+	client.AddRetryCondition(func(resp *resty.Response, err error) bool {
+		statusCode := resp.StatusCode()
+		if statusCode == 429 || statusCode >= 500 {
+			return true
+		}
+
+		return false
+	})
+
+	client.SetPreRequestHook(func(client *resty.Client, request *http.Request) error {
+		if request.Header.Get("Content-Type") == "[ignore]" {
+			request.Header.Del("Content-Type")
+		}
+
+		if request.Header.Get("Host") == "" {
+			request.Header.Add("Host", request.URL.Host)
+		}
+
+		if request.Header.Get("Referer") == "" {
+			request.Header.Add("Referer", ALIYUNDRIVE_HOST)
+		}
+
+		return nil
+	})
+}
 
 func NewAdriveClient(refreshToken string) (*AdriveClient, error) {
 	c := &AdriveClient{
@@ -95,8 +124,7 @@ func (c *AdriveClient) request(path string, body, out interface{}) (errResp *Err
 	}
 
 	if statusCode == 429 {
-		logger.Warn("request '%s' got 429, sleep 1s ...", path)
-		time.Sleep(time.Second)
+		logger.Warnf("请求接口 '%s' 遇到限流", path)
 	}
 
 	errResp = &ErrorResponse{}

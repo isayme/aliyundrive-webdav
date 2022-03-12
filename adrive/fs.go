@@ -170,7 +170,7 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 		if err != nil {
 			logger.Errorf("删除文件 '%s' 失败: %v", name, err)
 		} else {
-			logger.Infof("删除文件成功: %s", name)
+			logger.Infof("删除文件 '%s' 成功", name)
 		}
 	}()
 

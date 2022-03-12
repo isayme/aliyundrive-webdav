@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"sync"
 	"time"
+
+	"github.com/isayme/go-logger"
 )
 
 type File struct {
@@ -101,6 +103,14 @@ func (f *File) Stat() (fs.FileInfo, error) {
 	}, nil
 }
 
-func (f *File) Readdir(count int) ([]fs.FileInfo, error) {
-	return f.client.listDir(context.Background(), f)
+func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
+	defer func() {
+		if err != nil {
+			logger.Infof("列举目录 '%s' 下文件失败: %v", f.FileName, err)
+		} else {
+			logger.Infof("列举目录 '%s' 下文件成功, 共有子文件 %d 个", f.FileName, len(result))
+		}
+	}()
+	result, err = f.client.listDir(context.Background(), f)
+	return
 }

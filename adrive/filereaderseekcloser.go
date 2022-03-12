@@ -44,6 +44,10 @@ func (rsc *FileReadSeekerCloser) Read(p []byte) (n int, err error) {
 			logger.Errorf("获取文件 '%s' 下载链接失败: %v", rsc.file.FileName, err)
 			return 0, err
 		}
+		downloadUrl := downloadInfo.Url
+		if downloadUrl == "" {
+			return 0, fmt.Errorf("download url not return")
+		}
 
 		rsc.downloadUrlExpiration = downloadInfo.Expiration
 
@@ -53,7 +57,7 @@ func (rsc *FileReadSeekerCloser) Read(p []byte) (n int, err error) {
 			"Accept": "*/*",
 		}
 
-		resp, err := client.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(downloadInfo.Url)
+		resp, err := client.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(downloadUrl)
 		if err != nil {
 			logger.Warnf("打开文件 '%s' 下载链接失败: %v", rsc.file.FileName, err)
 			return 0, err
