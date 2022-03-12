@@ -113,7 +113,7 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		return err
 	}
 
-	fs.fileCache.Add(name, &file, 0)
+	fs.fileCache.Add(name, file, 0)
 	return nil
 }
 
