@@ -15,11 +15,13 @@ import (
 var showVersion bool
 var listenPort uint16
 var logLevel string
+var refreshToken string
 
 func init() {
-	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "show version")
-	rootCmd.Flags().StringVarP(&logLevel, "level", "l", "info", "log level")
 	rootCmd.Flags().Uint16VarP(&listenPort, "port", "p", 8080, "listen port")
+	rootCmd.Flags().StringVarP(&refreshToken, "refresh_token", "t", "", "your refresh token")
+	rootCmd.Flags().StringVarP(&logLevel, "level", "l", "info", "log level")
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "show version")
 }
 
 var rootCmd = &cobra.Command{
@@ -33,7 +35,7 @@ var rootCmd = &cobra.Command{
 		logger.SetFormat("console")
 		logger.SetLevel(logLevel)
 
-		fs, err := adrive.NewFileSystem("TODO: your refresh_token")
+		fs, err := adrive.NewFileSystem(refreshToken)
 		if err != nil {
 			logger.Errorf("初始化失败: %v", err)
 			return
