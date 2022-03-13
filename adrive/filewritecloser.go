@@ -33,10 +33,10 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 	if fwc.wc == nil {
 		reqBody := CreateFileReq{
 			Name:          fwc.file.FileName,
-			CheckNameMode: "refuse",
+			CheckNameMode: CHECK_NAME_MODE_REFUSE,
 			DriveId:       fwc.client.fileDriveId,
 			ParentFileId:  fwc.file.ParentFileId,
-			Type:          "file",
+			Type:          FILE_TYPE_FILE,
 			Size:          0,
 		}
 		respBody, err := fwc.client.createFile(context.Background(), &reqBody)

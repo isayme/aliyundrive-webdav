@@ -5,4 +5,6 @@ var (
 
 	FILE_TYPE_FILE   = "file"
 	FILE_TYPE_FOLDER = "folder"
+
+	CHECK_NAME_MODE_REFUSE = "refuse"
 )
