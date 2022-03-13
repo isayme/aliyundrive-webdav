@@ -266,8 +266,8 @@ func (c *AdriveClient) createFolder(ctx context.Context, name string, parentFile
 		"drive_id":        c.fileDriveId,
 		"name":            name,
 		"parent_file_id":  parentFileId,
-		"type":            "folder",
-		"check_name_mode": "refuse",
+		"type":            FILE_TYPE_FOLDER,
+		"check_name_mode": CHECK_NAME_MODE_REFUSE,
 	}
 
 	file := &File{}
@@ -341,7 +341,7 @@ func (c *AdriveClient) moveFile(fileId string, newParentFolderId string, newFile
 	reqBody := map[string]interface{}{
 		"drive_id":          c.fileDriveId,
 		"file_id":           fileId,
-		"check_name_mode":   "refuse",
+		"check_name_mode":   CHECK_NAME_MODE_REFUSE,
 		"overwrite":         false,
 		"to_parent_file_id": newParentFolderId,
 		"new_name":          newFileName,

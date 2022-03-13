@@ -106,9 +106,9 @@ func (f *File) Stat() (fs.FileInfo, error) {
 func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
 	defer func() {
 		if err != nil {
-			logger.Infof("列举目录 '%s' 下文件失败: %v", f.FileName, err)
+			logger.Infof("列举目录 '%s' 失败: %v", f.FileName, err)
 		} else {
-			logger.Infof("列举目录 '%s' 下文件成功, 共有子文件 %d 个", f.FileName, len(result))
+			logger.Infof("列举目录 '%s' 成功, 共有子文件 %d 个", f.FileName, len(result))
 		}
 	}()
 	result, err = f.client.listDir(context.Background(), f)

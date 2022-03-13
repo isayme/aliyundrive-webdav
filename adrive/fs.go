@@ -46,10 +46,10 @@ func (fs *FileSystem) rootFolder() *File {
 	return &File{
 		client:    fs.client,
 		FileName:  "/",
-		FileId:    "root",
+		FileId:    ROOT_FOLDER_ID,
 		FileSize:  0,
 		UpdatedAt: time.Now(),
-		Type:      "folder",
+		Type:      FILE_TYPE_FOLDER,
 	}
 }
 
@@ -83,7 +83,6 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 		return fs.client.getFileByPath(ctx, name)
 	})
 	if err != nil {
-		logger.Infof("获取文件 '%s' 失败: %v", name, err)
 		return nil, err
 	}
 
@@ -117,11 +116,17 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 	return nil
 }
 
-func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
-	// 调用量太大, 减少日志打印
-	if flag != 0 {
-		logger.Infof("打开文件 '%s', flag: %x, perm: %s", name, flag, perm.String())
-	}
+func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (result webdav.File, err error) {
+	defer func() {
+		if err != nil {
+			logger.Errorf("打开文件 '%s' 失败, flag: %x, perm: %s, err: %v", name, flag, perm.String(), err)
+		} else {
+			// 调用量太大, 减少日志打印
+			// if flag != 0 {
+			logger.Infof("打开文件 '%s' 成功, flag: %x, perm: %s", name, flag, perm.String())
+			// }
+		}
+	}()
 
 	name = fs.resolve(name)
 
@@ -149,7 +154,7 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 		file := &File{
 			FileName:     fileName,
 			ParentFileId: parentFolder.FileId,
-			Type:         "file",
+			Type:         FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
 			client:       fs.client,
 		}
@@ -190,7 +195,7 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 		return nil
 	}
 
-	if file.FileId == "root" {
+	if file.FileId == ROOT_FOLDER_ID {
 		logger.Error("根目录不允许删除")
 		return fmt.Errorf("cannot remove root folder")
 	}
@@ -238,7 +243,15 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 	return nil
 }
 
-func (fs *FileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
+func (fs *FileSystem) Stat(ctx context.Context, name string) (fi os.FileInfo, err error) {
+	defer func() {
+		if err != nil {
+			logger.Errorf("查看文件 '%s' 信息失败: %v", name, err)
+		} else {
+			logger.Infof("查看文件 '%s' 信息成功", name)
+		}
+	}()
+
 	file, err := fs.getFile(ctx, name)
 	if err != nil {
 		return nil, err
