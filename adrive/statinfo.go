@@ -9,7 +9,7 @@ type StatInfo struct {
 	name      string
 	size      int64
 	updatedAt time.Time
-	typ       string
+	mode      fs.FileMode
 }
 
 func (si *StatInfo) Name() string {
@@ -33,7 +33,7 @@ func (si *StatInfo) ModTime() time.Time {
 }
 
 func (si *StatInfo) IsDir() bool {
-	return si.typ == "folder"
+	return si.mode.IsDir()
 }
 
 func (si *StatInfo) Sys() interface{} {

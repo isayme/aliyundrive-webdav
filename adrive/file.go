@@ -95,11 +95,16 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (f *File) Stat() (fs.FileInfo, error) {
+	var mode fs.FileMode = 0660
+	if f.Type == FILE_TYPE_FOLDER {
+		mode = mode | fs.ModeDir
+	}
+
 	return &StatInfo{
 		name:      f.FileName,
 		size:      f.FileSize,
 		updatedAt: f.UpdatedAt,
-		typ:       f.Type,
+		mode:      mode,
 	}, nil
 }
 
