@@ -57,17 +57,21 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 		uploadUrl := respBody.PartInfoList[0].UploadUrl
 		rc, wc := io.Pipe()
 		go func() {
+			defer rc.Close()
 			resp, err := client.R().SetDoNotParseResponse(true).SetHeader("Content-Type", "[ignore]").SetBody(rc).Put(uploadUrl)
 			if err != nil {
-				logger.Errorf("打开上传链接失败: %v", err)
+				logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
 				return
 			}
 			rawBody := resp.RawBody()
 			defer rawBody.Close()
 
-			if resp.StatusCode() >= 300 {
-				bs, err := io.ReadAll(rawBody)
-				logger.Errorf("上传失败: statusCode: %d, err: %v, respBody: %s", resp.StatusCode, err, string(bs))
+			io.ReadAll(rawBody)
+
+			if resp.IsSuccess() {
+				logger.Errorf("文件 '%s' 上传成功", fwc.file.FileName)
+			} else {
+				logger.Errorf("文件 '%s' 上传失败: %v", fwc.file.FileName, err)
 			}
 		}()
 

@@ -33,6 +33,8 @@ func (rsc *FileReadSeekerCloser) Read(p []byte) (n int, err error) {
 	defer rsc.lock.Unlock()
 
 	defer func() {
+		// 断点续传
+		rsc.pos = rsc.pos + int64(n)
 		if err == io.EOF {
 			logger.Infof("读文件 '%s' 结束", rsc.file.FileName)
 		}

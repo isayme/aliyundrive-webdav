@@ -112,7 +112,7 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		return err
 	}
 
-	fs.fileCache.Add(name, file, 0)
+	fs.fileCache.Set(name, file, 0)
 	return nil
 }
 
@@ -130,11 +130,14 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 
 	name = fs.resolve(name)
 
+	if flag&(os.O_SYNC|os.O_APPEND) > 0 {
+		return nil, os.ErrInvalid
+	}
+
 	if flag&os.O_TRUNC > 0 {
 		err := fs.RemoveAll(ctx, name)
 		if err != nil && err != os.ErrNotExist {
-			logger.Infof("打开文件 '%s' 失败: 删除原文件失败: %v", name, err)
-			return nil, err
+			return nil, errors.Wrap(err, "删除源文件失败")
 		}
 	}
 
@@ -147,13 +150,13 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 
 		parentFolder, err := fs.getFile(ctx, path.Dir(name))
 		if err != nil {
-			logger.Errorf("获取父文件夹失败, err: %v", err)
-			return nil, err
+			return nil, errors.Wrap(err, "获取父文件夹失败")
 		}
 
 		file := &File{
 			FileName:     fileName,
 			ParentFileId: parentFolder.FileId,
+			DriveId:      parentFolder.DriveId,
 			Type:         FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
 			client:       fs.client,
@@ -196,8 +199,7 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 	}
 
 	if file.FileId == ROOT_FOLDER_ID {
-		logger.Error("根目录不允许删除")
-		return fmt.Errorf("cannot remove root folder")
+		return fmt.Errorf("根目录不允许删除")
 	}
 
 	return fs.client.trashFile(ctx, file.FileId)

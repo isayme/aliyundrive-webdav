@@ -92,6 +92,10 @@ type ErrorResponse struct {
 }
 
 func (c *AdriveClient) request(path string, body, out interface{}) (errResp *ErrorResponse, err error) {
+	defer func() {
+		logger.Debugf("Request %s, reqBody: %v, respBody: %v, err: %v, errResp: %v", path, body, out, err, errResp)
+	}()
+
 	url := fmt.Sprintf("%s%s", ALIYUNDRIVE_API_HOST, path)
 
 	var accessToken string
@@ -114,8 +118,7 @@ func (c *AdriveClient) request(path string, body, out interface{}) (errResp *Err
 		return nil, err
 	}
 
-	statusCode := resp.StatusCode()
-	if statusCode >= 200 && statusCode < 300 {
+	if resp.IsSuccess() {
 		json.Unmarshal(bs, out)
 		if err != nil {
 			return nil, err
@@ -123,6 +126,7 @@ func (c *AdriveClient) request(path string, body, out interface{}) (errResp *Err
 		return nil, nil
 	}
 
+	statusCode := resp.StatusCode()
 	if statusCode == 429 {
 		logger.Warnf("请求接口 '%s' 遇到限流", path)
 	}
@@ -137,7 +141,7 @@ func (c *AdriveClient) request(path string, body, out interface{}) (errResp *Err
 		logger.Warnw("requestFail", "err", err, "statusCode", statusCode, "reqBody", body, "respBody", errResp)
 	}
 
-	return errResp, fmt.Errorf("requestFail, code: %d", statusCode)
+	return errResp, fmt.Errorf("requestFail, code: %s/%d", errResp.Code, statusCode)
 }
 
 type RefreshTokenResp struct {
