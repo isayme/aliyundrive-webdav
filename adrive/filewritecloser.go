@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/isayme/go-logger"
@@ -56,7 +58,7 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 
 		uploadUrl := respBody.PartInfoList[0].UploadUrl
 		rc, wc := io.Pipe()
-		
+
 		// 不可用 resty, resty 会 ReadAll request body
 		go func() {
 			defer rc.Close()
@@ -95,6 +97,9 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 				logger.Infof("写文件 '%s' 结束", fwc.file.FileName)
 			}
 		}()
+
+		fwc.wc = wc
+	}
 
 	return fwc.wc.Write(p)
 }
