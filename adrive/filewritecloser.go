@@ -56,27 +56,45 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 
 		uploadUrl := respBody.PartInfoList[0].UploadUrl
 		rc, wc := io.Pipe()
+		
+		// 不可用 resty, resty 会 ReadAll request body
 		go func() {
 			defer rc.Close()
-			resp, err := client.R().SetDoNotParseResponse(true).SetHeader("Content-Type", "[ignore]").SetBody(rc).Put(uploadUrl)
+
+			URL, err := url.Parse(uploadUrl)
+			if err != nil {
+				logger.Errorf("解析文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
+				return
+			}
+
+			req, err := http.NewRequest("PUT", uploadUrl, rc)
 			if err != nil {
 				logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
 				return
 			}
-			rawBody := resp.RawBody()
+
+			headers := http.Header{}
+			headers.Set("Host", URL.Host)
+			headers.Set("Referer", ALIYUNDRIVE_HOST)
+
+			req.Header = headers
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
+				return
+			}
+
+			rawBody := resp.Body
 			defer rawBody.Close()
 
-			io.ReadAll(rawBody)
+			bs, err := io.ReadAll(rawBody)
 
-			if resp.IsSuccess() {
-				logger.Errorf("文件 '%s' 上传成功", fwc.file.FileName)
+			if resp.StatusCode >= 300 {
+				logger.Errorf("写文件 '%s' 失败: %v, %s", fwc.file.FileName, err, string(bs))
 			} else {
-				logger.Errorf("文件 '%s' 上传失败: %v", fwc.file.FileName, err)
+				logger.Infof("写文件 '%s' 结束", fwc.file.FileName)
 			}
 		}()
-
-		fwc.wc = wc
-	}
 
 	return fwc.wc.Write(p)
 }
