@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
 )
 
@@ -18,7 +19,8 @@ type FileWriteCloser struct {
 	uploadId string
 	wc       io.WriteCloser
 
-	lock sync.Mutex
+	uploadEnd chan error
+	lock      sync.Mutex
 }
 
 func NewFileWriteCloser(client *AdriveClient, file *File) *FileWriteCloser {
@@ -60,39 +62,49 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 		rc, wc := io.Pipe()
 
 		// 不可用 resty, resty 会 ReadAll request body
+		URL, err := url.Parse(uploadUrl)
+		if err != nil {
+			logger.Errorf("解析文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
+			return 0, err
+		}
+
+		req, err := http.NewRequest("PUT", uploadUrl, rc)
+		if err != nil {
+			logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
+			return 0, err
+		}
+
 		go func() {
+			var err error
+			defer func() {
+				fwc.uploadEnd <- err
+			}()
 			defer rc.Close()
 
-			URL, err := url.Parse(uploadUrl)
-			if err != nil {
-				logger.Errorf("解析文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
-				return
-			}
-
-			req, err := http.NewRequest("PUT", uploadUrl, rc)
-			if err != nil {
-				logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
-				return
-			}
+			fwc.uploadEnd = make(chan error, 1)
 
 			headers := http.Header{}
+			headers.Set("User-Agent", util.UserAgent)
 			headers.Set("Host", URL.Host)
 			headers.Set("Referer", ALIYUNDRIVE_HOST)
-
 			req.Header = headers
+
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				logger.Errorf("打开文件 '%s' 上传链接失败: %v", fwc.file.FileName, err)
 				return
 			}
-
 			rawBody := resp.Body
 			defer rawBody.Close()
 
 			bs, err := io.ReadAll(rawBody)
+			if err != nil {
+				return
+			}
 
 			if resp.StatusCode >= 300 {
 				logger.Errorf("写文件 '%s' 失败: %v, %s", fwc.file.FileName, err, string(bs))
+				err = fmt.Errorf(string(bs))
 			} else {
 				logger.Infof("写文件 '%s' 结束", fwc.file.FileName)
 			}
@@ -110,7 +122,8 @@ func (fwc *FileWriteCloser) Close() (err error) {
 
 	defer func() {
 		if err != nil {
-			logger.Errorf("上传文件 '%s' 失败: %v", fwc.file.FileName, err)
+			derr := fwc.client.deleteFile(context.Background(), fwc.file.DriveId, fwc.file.FileId)
+			logger.Errorf("上传文件 '%s' 失败, 需要删除此文件. 失败原因: %v, 删除结果: %v", fwc.file.FileName, err, derr)
 		} else {
 			logger.Infof("上传文件 '%s' 成功", fwc.file.FileName)
 		}
@@ -123,6 +136,14 @@ func (fwc *FileWriteCloser) Close() (err error) {
 	err = fwc.wc.Close()
 	if err != nil {
 		return err
+	}
+
+	// 等文件内容上传结束
+	if fwc.uploadEnd != nil {
+		err = <-fwc.uploadEnd
+		if err != nil {
+			return err
+		}
 	}
 
 	return fwc.client.completeFile(context.Background(), &CompleteFileReq{
