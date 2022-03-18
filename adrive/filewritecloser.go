@@ -91,6 +91,8 @@ func (fwc *FileWriteCloser) Close() (err error) {
 
 	var result *CompleteFileResp
 	defer func() {
+		fwc.fs.fileCache.Delete(fwc.file.path)
+
 		if err != nil {
 			logger.Errorf("上传文件 '%s' 失败: %v", fwc.file.FileName, err)
 			fwc.tryDeleteFile()
