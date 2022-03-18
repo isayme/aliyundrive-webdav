@@ -318,6 +318,20 @@ func (c *AdriveClient) createFile(ctx context.Context, reqBody *CreateFileReq) (
 	return &respBody, nil
 }
 
+func (c *AdriveClient) deleteFile(ctx context.Context, driveId, fileId string) error {
+	reqBody := map[string]string{
+		"drive_id": driveId,
+		"file_id":  fileId,
+	}
+	respBody := EmptyStruct{}
+	_, err := c.request("/v2/file/delete", reqBody, &respBody)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type CompleteFileReq struct {
 	DriveId  string `json:"drive_id"`
 	FileId   string `json:"file_id"`
