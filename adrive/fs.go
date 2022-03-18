@@ -16,24 +16,28 @@ import (
 )
 
 type FileSystem struct {
-	client *AdriveClient
+	refreshToken          string
+	accessToken           string
+	accessTokenExpireTime time.Time
+	fileDriveId           string
 
-	sg *singleflight.Group
-
+	sg        *singleflight.Group
 	fileCache *cache.Cache
 }
 
 func NewFileSystem(refreshToken string) (*FileSystem, error) {
-	client, err := NewAdriveClient(refreshToken)
+	fs := &FileSystem{
+		refreshToken: refreshToken,
+		sg:           &singleflight.Group{},
+		fileCache:    cache.New(time.Second*10, time.Second),
+	}
+
+	user, err := fs.getLoginUser()
 	if err != nil {
 		return nil, err
 	}
 
-	fs := &FileSystem{
-		client:    client,
-		sg:        &singleflight.Group{},
-		fileCache: cache.New(time.Second*10, time.Second),
-	}
+	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
 
 	return fs, nil
 }
@@ -44,7 +48,8 @@ func (fs *FileSystem) resolve(name string) string {
 
 func (fs *FileSystem) rootFolder() *File {
 	return &File{
-		client:    fs.client,
+		path:      "/",
+		fs:        fs,
 		FileName:  "/",
 		FileId:    ROOT_FOLDER_ID,
 		FileSize:  0,
@@ -79,14 +84,13 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 		return nil, os.ErrInvalid
 	}
 
-	result, err, _ := fs.sg.Do(name, func() (interface{}, error) {
-		return fs.client.getFileByPath(ctx, name)
-	})
+	file, err := fs.getFileByPath(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	file := result.(*File)
+	file.path = name
+	file.fs = fs
 	fs.fileCache.Set(name, file, 0)
 	return file, nil
 }
@@ -107,12 +111,11 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		return err
 	}
 
-	file, err := fs.client.createFolder(ctx, path.Base(name), parentFolder.FileId)
+	_, err = fs.createFolder(ctx, path.Base(name), parentFolder.FileId)
 	if err != nil {
 		return err
 	}
 
-	fs.fileCache.Set(name, file, 0)
 	return nil
 }
 
@@ -159,7 +162,8 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			DriveId:      parentFolder.DriveId,
 			Type:         FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
-			client:       fs.client,
+			fs:           fs,
+			path:         name,
 		}
 
 		fs.fileCache.Set(name, file, 0)
@@ -202,7 +206,7 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 		return fmt.Errorf("根目录不允许删除")
 	}
 
-	return fs.client.trashFile(ctx, file.FileId)
+	return fs.trashFile(ctx, file.FileId)
 }
 
 func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err error) {
@@ -217,6 +221,9 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 	oldName = fs.resolve(oldName)
 	newName = fs.resolve(newName)
 
+	fs.fileCache.Delete(oldName)
+	fs.fileCache.Delete(newName)
+
 	sourceFile, err := fs.getFile(ctx, oldName)
 	if err != nil {
 		return errors.Wrapf(err, "获取源文件失败")
@@ -226,7 +233,7 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 	newFileName := path.Base(newName)
 
 	if path.Dir(oldName) == newFolder {
-		err := fs.client.updateFileName(sourceFile.FileId, newFileName)
+		err := fs.updateFileName(sourceFile.FileId, newFileName)
 		if err != nil {
 			return errors.Wrapf(err, "重命名")
 		}
@@ -236,7 +243,7 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 			return errors.Wrapf(err, "获取目的父文件夹失败")
 		}
 
-		err = fs.client.moveFile(sourceFile.FileId, newParentFolder.FileId, newFileName)
+		err = fs.moveFile(sourceFile.FileId, newParentFolder.FileId, newFileName)
 		if err != nil {
 			return errors.Wrapf(err, "移动失败")
 		}

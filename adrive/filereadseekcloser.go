@@ -10,8 +10,9 @@ import (
 )
 
 type FileReadSeekerCloser struct {
-	file   *File
-	client *AdriveClient
+	file *File
+
+	fs *FileSystem
 
 	pos                   int64
 	downloadUrlExpiration time.Time
@@ -21,10 +22,10 @@ type FileReadSeekerCloser struct {
 	lock sync.Mutex
 }
 
-func NewFileReadCloser(client *AdriveClient, file *File) *FileReadSeekerCloser {
+func NewFileReadCloser(file *File) *FileReadSeekerCloser {
 	return &FileReadSeekerCloser{
-		file:   file,
-		client: client,
+		file: file,
+		fs:   file.fs,
 	}
 }
 
@@ -41,7 +42,7 @@ func (rsc *FileReadSeekerCloser) Read(p []byte) (n int, err error) {
 	}()
 
 	if rsc.rc == nil || time.Now().After(rsc.downloadUrlExpiration) {
-		downloadInfo, err := rsc.client.getDownloadUrl(rsc.file.FileId)
+		downloadInfo, err := rsc.fs.getDownloadUrl(rsc.file.FileId)
 		if err != nil {
 			logger.Errorf("获取文件 '%s' 下载链接失败: %v", rsc.file.FileName, err)
 			return 0, err
@@ -55,8 +56,8 @@ func (rsc *FileReadSeekerCloser) Read(p []byte) (n int, err error) {
 
 		headerRange := fmt.Sprintf("bytes=%d-", rsc.pos)
 		headers := map[string]string{
-			"Range":  headerRange,
-			"Accept": "*/*",
+			HEADER_RANGE:  headerRange,
+			HEADER_ACCEPT: "*/*",
 		}
 
 		resp, err := client.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(downloadUrl)

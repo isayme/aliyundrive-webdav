@@ -14,8 +14,9 @@ import (
 var ErrMaxWriteByteExceed = fmt.Errorf("exceed max write byte")
 
 type Uploader struct {
+	nw int64
+
 	// 当前分片已写入字节, 单分片写入限制最大5G
-	nw            int64
 	maxWriteBytes int64
 
 	wc io.WriteCloser
@@ -52,9 +53,9 @@ func NewUploader(uploadUrl string, maxWriteBytes int64) (*Uploader, error) {
 		defer rc.Close()
 
 		headers := http.Header{}
-		headers.Set("User-Agent", util.UserAgent)
-		headers.Set("Host", URL.Host)
-		headers.Set("Referer", ALIYUNDRIVE_HOST)
+		headers.Set(HEADER_USER_AGENT, util.UserAgent)
+		headers.Set(HEADER_HOST, URL.Host)
+		headers.Set(HEADER_REFERER, ALIYUNDRIVE_HOST)
 		req.Header = headers
 
 		resp, err := http.DefaultClient.Do(req)
@@ -100,6 +101,9 @@ func (u *Uploader) Write(p []byte) (n int, err error) {
 }
 
 func (u *Uploader) CloseAndWait() error {
+	u.lock.Lock()
+	defer u.lock.Unlock()
+
 	err := u.wc.Close()
 	if err != nil {
 		return err

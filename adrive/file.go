@@ -19,7 +19,8 @@ type File struct {
 	FileId       string    `json:"file_id"`
 	ParentFileId string    `json:"parent_file_id"`
 
-	client *AdriveClient
+	path string
+	fs   *FileSystem
 
 	rsc io.ReadSeekCloser
 	wc  io.WriteCloser
@@ -33,10 +34,12 @@ func (f *File) Clone() *File {
 		FileSize:     f.FileSize,
 		UpdatedAt:    f.UpdatedAt,
 		Type:         f.Type,
-		FileId:       f.FileId,
 		DriveId:      f.DriveId,
+		FileId:       f.FileId,
 		ParentFileId: f.ParentFileId,
-		client:       f.client,
+
+		fs:   f.fs,
+		path: f.path,
 	}
 }
 
@@ -62,7 +65,7 @@ func (f *File) Write(p []byte) (n int, err error) {
 	defer f.lock.Unlock()
 
 	if f.wc == nil {
-		f.wc, err = NewFileWriteCloser(f.client, f)
+		f.wc, err = NewFileWriteCloser(f)
 		if err != nil {
 			return 0, err
 		}
@@ -73,7 +76,7 @@ func (f *File) Write(p []byte) (n int, err error) {
 
 func (f *File) getFileReadSeekCloser() io.ReadSeekCloser {
 	if f.rsc == nil {
-		f.rsc = NewFileReadCloser(f.client, f)
+		f.rsc = NewFileReadCloser(f)
 	}
 
 	return f.rsc
@@ -116,7 +119,7 @@ func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
 		}
 	}()
 
-	files, err := f.client.listDir(context.Background(), f)
+	files, err := f.fs.listDir(context.Background(), f)
 	if err != nil {
 		return nil, err
 	}

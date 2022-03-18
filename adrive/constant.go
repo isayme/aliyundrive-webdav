@@ -8,3 +8,15 @@ var (
 
 	CHECK_NAME_MODE_REFUSE = "refuse"
 )
+
+var (
+	ALIYUNDRIVE_API_HOST = "https://api.aliyundrive.com"
+	ALIYUNDRIVE_HOST     = "https://www.aliyundrive.com/"
+
+	HEADER_HOST          = "Host"
+	HEADER_REFERER       = "Referer"
+	HEADER_USER_AGENT    = "User-Agent"
+	HEADER_RANGE         = "Range"
+	HEADER_ACCEPT        = "Accept"
+	HEADER_AUTHORIZATION = "Authorization"
+)

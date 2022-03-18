@@ -8,21 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
 )
-
-type AdriveClient struct {
-	refreshToken          string
-	accessToken           string
-	accessTokenExpireTime time.Time
-	fileDriveId           string
-}
-
-const ALIYUNDRIVE_API_HOST = "https://api.aliyundrive.com"
-const ALIYUNDRIVE_HOST = "https://www.aliyundrive.com/"
 
 var client *resty.Client
 
@@ -68,21 +60,6 @@ func init() {
 	})
 }
 
-func NewAdriveClient(refreshToken string) (*AdriveClient, error) {
-	c := &AdriveClient{
-		refreshToken: refreshToken,
-	}
-
-	user, err := c.getLoginUser()
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
-
-	return c, nil
-}
-
 type EmptyStruct struct{}
 
 type ErrorResponse struct {
@@ -90,22 +67,22 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func (c *AdriveClient) request(path string, body, out interface{}) (errResp *ErrorResponse, err error) {
+func (fs *FileSystem) request(path string, body, out interface{}) (errResp *ErrorResponse, err error) {
 	defer func() {
-		logger.Debugf("Request %s, reqBody: %v, respBody: %v, err: %v, errResp: %v", path, body, out, err, errResp)
+		logger.Debugf("Request %s, reqBody: %v, respBody: %v, err: %v, errResp: %v", path, util.Stringify(body), util.Stringify(out), err, errResp)
 	}()
 
 	url := fmt.Sprintf("%s%s", ALIYUNDRIVE_API_HOST, path)
 
 	var accessToken string
 	if path != "/token/refresh" {
-		accessToken, err = c.getAccessToken()
+		accessToken, err = fs.getAccessToken()
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	resp, err := client.R().SetHeader("Authorization", accessToken).SetDoNotParseResponse(true).SetBody(body).Post(url)
+	resp, err := client.R().SetHeader(HEADER_AUTHORIZATION, accessToken).SetDoNotParseResponse(true).SetBody(body).Post(url)
 	if err != nil {
 		return nil, err
 	}
@@ -150,34 +127,34 @@ type RefreshTokenResp struct {
 	ExpireTime   time.Time `json:"expire_time"`
 }
 
-func (c *AdriveClient) doRefreshToken() (*RefreshTokenResp, error) {
+func (fs *FileSystem) doRefreshToken() (*RefreshTokenResp, error) {
 	reqBody := map[string]string{
-		"refresh_token": c.refreshToken,
+		"refresh_token": fs.refreshToken,
 	}
 	respBody := &RefreshTokenResp{}
-	_, err := c.request("/token/refresh", reqBody, respBody)
+	_, err := fs.request("/token/refresh", reqBody, respBody)
 	if err != nil {
 		return nil, err
 	}
 	return respBody, nil
 }
 
-func (c *AdriveClient) getAccessToken() (string, error) {
-	if c.accessToken == "" || time.Now().After(c.accessTokenExpireTime) {
-		refreshTokenResp, err := c.doRefreshToken()
+func (fs *FileSystem) getAccessToken() (string, error) {
+	if fs.accessToken == "" || time.Now().After(fs.accessTokenExpireTime) {
+		refreshTokenResp, err := fs.doRefreshToken()
 		if err != nil {
 			logger.Errorf("刷新 token 失败: %v", err)
 			return "", err
 		}
 
-		c.accessToken = refreshTokenResp.AccessToken
-		c.refreshToken = refreshTokenResp.RefreshToken
-		c.accessTokenExpireTime = refreshTokenResp.ExpireTime
-		c.fileDriveId = refreshTokenResp.FileDriveId
+		fs.accessToken = refreshTokenResp.AccessToken
+		fs.refreshToken = refreshTokenResp.RefreshToken
+		fs.accessTokenExpireTime = refreshTokenResp.ExpireTime
+		fs.fileDriveId = refreshTokenResp.FileDriveId
 		logger.Info("刷新 token 成功")
 	}
 
-	return c.accessToken, nil
+	return fs.accessToken, nil
 }
 
 type User struct {
@@ -185,11 +162,11 @@ type User struct {
 	NickName string `json:"nick_name"`
 }
 
-func (c *AdriveClient) getLoginUser() (*User, error) {
+func (fs *FileSystem) getLoginUser() (*User, error) {
 	reqBody := EmptyStruct{}
 
 	respBody := User{}
-	_, err := c.request("/v2/user/get", reqBody, &respBody)
+	_, err := fs.request("/v2/user/get", reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -202,29 +179,35 @@ type ListFileResp struct {
 	NextMarker string  `json:"next_marker"`
 }
 
-func (c *AdriveClient) listDir(ctx context.Context, file *File) ([]*File, error) {
+func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) {
 	reqBody := map[string]string{
-		"drive_id":       c.fileDriveId,
+		"drive_id":       file.DriveId,
 		"parent_file_id": file.FileId,
 	}
 
 	respBody := ListFileResp{}
-	_, err := c.request("/v2/file/list", reqBody, &respBody)
+	_, err := fs.request("/v2/file/list", reqBody, &respBody)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, item := range respBody.Items {
+		item.path = path.Join(file.path, item.FileName)
+		item.fs = fs
+		fs.fileCache.Set(item.path, item, 0)
 	}
 
 	return respBody.Items, nil
 }
 
-func (c *AdriveClient) getFileByPath(ctx context.Context, name string) (*File, error) {
+func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*File, error) {
 	reqBody := map[string]string{
-		"drive_id":  c.fileDriveId,
+		"drive_id":  fs.fileDriveId,
 		"file_path": name,
 	}
 
 	file := &File{}
-	errResp, err := c.request("/v2/file/get_by_path", reqBody, file)
+	errResp, err := fs.request("/v2/file/get_by_path", reqBody, file)
 	if err != nil && errResp != nil && errResp.Code == "NotFound.File" {
 		return nil, os.ErrNotExist
 	}
@@ -233,7 +216,9 @@ func (c *AdriveClient) getFileByPath(ctx context.Context, name string) (*File, e
 		return nil, err
 	}
 
-	file.client = c
+	file.fs = fs
+	file.path = name
+
 	return file, nil
 }
 
@@ -243,14 +228,14 @@ type GetFileDownloadUrlResp struct {
 	Expiration time.Time `json:"expiration"`
 }
 
-func (c *AdriveClient) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, error) {
+func (fs *FileSystem) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, error) {
 	reqBody := map[string]string{
-		"drive_id": c.fileDriveId,
+		"drive_id": fs.fileDriveId,
 		"file_id":  fileId,
 	}
 
 	respBody := GetFileDownloadUrlResp{}
-	_, err := c.request("/v2/file/get_download_url", reqBody, &respBody)
+	_, err := fs.request("/v2/file/get_download_url", reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -258,9 +243,9 @@ func (c *AdriveClient) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, e
 	return &respBody, nil
 }
 
-func (c *AdriveClient) createFolder(ctx context.Context, name string, parentFileId string) (*File, error) {
+func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileId string) (*File, error) {
 	reqBody := map[string]string{
-		"drive_id":        c.fileDriveId,
+		"drive_id":        fs.fileDriveId,
 		"name":            name,
 		"parent_file_id":  parentFileId,
 		"type":            FILE_TYPE_FOLDER,
@@ -268,12 +253,13 @@ func (c *AdriveClient) createFolder(ctx context.Context, name string, parentFile
 	}
 
 	file := &File{}
-	_, err := c.request("/v2/file/create", reqBody, file)
+	_, err := fs.request("/v2/file/create", reqBody, file)
 	if err != nil {
 		return nil, err
 	}
 
-	file.client = c
+	file.fs = fs
+	file.path = name
 	return file, nil
 }
 
@@ -301,9 +287,9 @@ type CreateFileResp struct {
 	PartInfoList []UploadPartInfo `json:"part_info_list"`
 }
 
-func (c *AdriveClient) createFile(ctx context.Context, reqBody *CreateFileReq) (*CreateFileResp, error) {
+func (fs *FileSystem) createFile(ctx context.Context, reqBody *CreateFileReq) (*CreateFileResp, error) {
 	respBody := CreateFileResp{}
-	_, err := c.request("/adrive/v2/file/createWithFolders", reqBody, &respBody)
+	_, err := fs.request("/adrive/v2/file/createWithFolders", reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -311,13 +297,13 @@ func (c *AdriveClient) createFile(ctx context.Context, reqBody *CreateFileReq) (
 	return &respBody, nil
 }
 
-func (c *AdriveClient) deleteFile(ctx context.Context, driveId, fileId string) error {
+func (fs *FileSystem) deleteFile(ctx context.Context, driveId, fileId string) error {
 	reqBody := map[string]string{
 		"drive_id": driveId,
 		"file_id":  fileId,
 	}
 	respBody := EmptyStruct{}
-	_, err := c.request("/v2/file/delete", reqBody, &respBody)
+	_, err := fs.request("/v2/file/delete", reqBody, &respBody)
 	if err != nil {
 		return err
 	}
@@ -336,9 +322,9 @@ type CompleteFileResp struct {
 	Size        int64  `json:"size"`
 }
 
-func (c *AdriveClient) completeFile(ctx context.Context, reqBody *CompleteFileReq) (*CompleteFileResp, error) {
+func (fs *FileSystem) completeFile(ctx context.Context, reqBody *CompleteFileReq) (*CompleteFileResp, error) {
 	respBody := &CompleteFileResp{}
-	_, err := c.request("/v2/file/complete", reqBody, respBody)
+	_, err := fs.request("/v2/file/complete", reqBody, respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -346,20 +332,20 @@ func (c *AdriveClient) completeFile(ctx context.Context, reqBody *CompleteFileRe
 	return respBody, nil
 }
 
-func (c *AdriveClient) trashFile(ctx context.Context, fileId string) error {
+func (fs *FileSystem) trashFile(ctx context.Context, fileId string) error {
 	reqBody := map[string]string{
-		"drive_id": c.fileDriveId,
+		"drive_id": fs.fileDriveId,
 		"file_id":  fileId,
 	}
 
 	respBody := EmptyStruct{}
-	_, err := c.request("/v2/recyclebin/trash", reqBody, &respBody)
+	_, err := fs.request("/v2/recyclebin/trash", reqBody, &respBody)
 	return err
 }
 
-func (c *AdriveClient) moveFile(fileId string, newParentFolderId string, newFileName string) error {
+func (fs *FileSystem) moveFile(fileId string, newParentFolderId string, newFileName string) error {
 	reqBody := map[string]interface{}{
-		"drive_id":          c.fileDriveId,
+		"drive_id":          fs.fileDriveId,
 		"file_id":           fileId,
 		"check_name_mode":   CHECK_NAME_MODE_REFUSE,
 		"overwrite":         false,
@@ -367,17 +353,17 @@ func (c *AdriveClient) moveFile(fileId string, newParentFolderId string, newFile
 		"new_name":          newFileName,
 	}
 	respBody := EmptyStruct{}
-	_, err := c.request("/v2/file/move", reqBody, &respBody)
+	_, err := fs.request("/v2/file/move", reqBody, &respBody)
 	return err
 }
 
-func (c *AdriveClient) updateFileName(fileId string, newFileName string) error {
+func (fs *FileSystem) updateFileName(fileId string, newFileName string) error {
 	reqBody := map[string]interface{}{
-		"drive_id": c.fileDriveId,
+		"drive_id": fs.fileDriveId,
 		"file_id":  fileId,
 		"name":     newFileName,
 	}
 	respBody := EmptyStruct{}
-	_, err := c.request("/v2/file/update", reqBody, &respBody)
+	_, err := fs.request("/v2/file/update", reqBody, &respBody)
 	return err
 }

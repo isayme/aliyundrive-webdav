@@ -11,8 +11,8 @@ import (
 const defaultMaxWriteBytes = 5 * 1024 * 1024 * 1024
 
 type FileWriteCloser struct {
-	file   *File
-	client *AdriveClient
+	file *File
+	fs   *FileSystem
 
 	uploadId string
 
@@ -23,22 +23,22 @@ type FileWriteCloser struct {
 	lock      sync.Mutex
 }
 
-func NewFileWriteCloser(client *AdriveClient, file *File) (*FileWriteCloser, error) {
+func NewFileWriteCloser(file *File) (*FileWriteCloser, error) {
 	ctx := context.Background()
 	fwc := &FileWriteCloser{
-		client: client,
-		file:   file,
+		fs:   file.fs,
+		file: file,
 	}
 
 	reqBody := CreateFileReq{
 		Name:          fwc.file.FileName,
 		CheckNameMode: CHECK_NAME_MODE_REFUSE,
-		DriveId:       fwc.client.fileDriveId,
+		DriveId:       fwc.file.DriveId,
 		ParentFileId:  fwc.file.ParentFileId,
 		Type:          FILE_TYPE_FILE,
 		Size:          0,
 	}
-	respBody, err := fwc.client.createFile(ctx, &reqBody)
+	respBody, err := fwc.fs.createFile(ctx, &reqBody)
 	if err != nil {
 		logger.Errorf("创建文件 '%s' 失败: %v", fwc.file.FileName, err)
 		return nil, err
@@ -66,7 +66,7 @@ func NewFileWriteCloser(client *AdriveClient, file *File) (*FileWriteCloser, err
 }
 
 func (fwc *FileWriteCloser) tryDeleteFile() {
-	err := fwc.client.deleteFile(context.Background(), fwc.file.DriveId, fwc.file.FileId)
+	err := fwc.fs.deleteFile(context.Background(), fwc.file.DriveId, fwc.file.FileId)
 	if err != nil {
 		logger.Infof("删除文件 '%s' 失败: %v", fwc.file.FileName, err)
 	} else {
@@ -107,8 +107,8 @@ func (fwc *FileWriteCloser) Close() (err error) {
 		}
 	}
 
-	result, err = fwc.client.completeFile(context.Background(), &CompleteFileReq{
-		DriveId:  fwc.client.fileDriveId,
+	result, err = fwc.fs.completeFile(context.Background(), &CompleteFileReq{
+		DriveId:  fwc.file.DriveId,
 		FileId:   fwc.file.FileId,
 		UploadId: fwc.uploadId,
 	})

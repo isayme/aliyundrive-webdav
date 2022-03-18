@@ -21,11 +21,7 @@ func (si *StatInfo) Size() int64 {
 }
 
 func (si *StatInfo) Mode() fs.FileMode {
-	if si.IsDir() {
-		return fs.ModeDir | 0777
-	}
-
-	return 0666
+	return si.mode
 }
 
 func (si *StatInfo) ModTime() time.Time {
