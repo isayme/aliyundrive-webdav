@@ -52,6 +52,7 @@ func (fs *FileSystem) rootFolder() *File {
 		fs:        fs,
 		FileName:  "/",
 		FileId:    ROOT_FOLDER_ID,
+		DriveId:   fs.fileDriveId,
 		FileSize:  0,
 		UpdatedAt: time.Now(),
 		Type:      FILE_TYPE_FOLDER,
