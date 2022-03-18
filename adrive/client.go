@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -199,11 +198,11 @@ func (c *AdriveClient) getLoginUser() (*User, error) {
 }
 
 type ListFileResp struct {
-	Items      []File `json:"items"`
-	NextMarker string `json:"next_marker"`
+	Items      []*File `json:"items"`
+	NextMarker string  `json:"next_marker"`
 }
 
-func (c *AdriveClient) listDir(ctx context.Context, file *File) ([]fs.FileInfo, error) {
+func (c *AdriveClient) listDir(ctx context.Context, file *File) ([]*File, error) {
 	reqBody := map[string]string{
 		"drive_id":       c.fileDriveId,
 		"parent_file_id": file.FileId,
@@ -215,13 +214,7 @@ func (c *AdriveClient) listDir(ctx context.Context, file *File) ([]fs.FileInfo, 
 		return nil, err
 	}
 
-	items := make([]fs.FileInfo, len(respBody.Items))
-	for idx, item := range respBody.Items {
-		si, _ := item.Stat()
-		items[idx] = si
-	}
-
-	return items, nil
+	return respBody.Items, nil
 }
 
 func (c *AdriveClient) getFileByPath(ctx context.Context, name string) (*File, error) {

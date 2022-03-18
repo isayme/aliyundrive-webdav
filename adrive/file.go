@@ -57,19 +57,18 @@ func (f *File) Close() error {
 	return nil
 }
 
-func (f *File) getFilWriteCloser() io.WriteCloser {
-	if f.wc == nil {
-		f.wc = NewFileWriteCloser(f.client, f)
-	}
-
-	return f.wc
-}
-
 func (f *File) Write(p []byte) (n int, err error) {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
-	return f.getFilWriteCloser().Write(p)
+	if f.wc == nil {
+		f.wc, err = NewFileWriteCloser(f.client, f)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return f.wc.Write(p)
 }
 
 func (f *File) getFileReadSeekCloser() io.ReadSeekCloser {
@@ -116,6 +115,17 @@ func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
 			logger.Infof("列举目录 '%s' 成功, 共有子文件 %d 个", f.FileName, len(result))
 		}
 	}()
-	result, err = f.client.listDir(context.Background(), f)
-	return
+
+	files, err := f.client.listDir(context.Background(), f)
+	if err != nil {
+		return nil, err
+	}
+
+	result = make([]fs.FileInfo, len(files))
+	for idx, file := range files {
+		si, _ := file.Stat()
+		result[idx] = si
+	}
+
+	return result, nil
 }
