@@ -338,10 +338,19 @@ type CompleteFileReq struct {
 	UploadId string `json:"upload_id"`
 }
 
-func (c *AdriveClient) completeFile(ctx context.Context, reqBody *CompleteFileReq) error {
-	respBody := EmptyStruct{}
-	_, err := c.request("/v2/file/complete", reqBody, &respBody)
-	return err
+type CompleteFileResp struct {
+	ContentHash string `json:"content_hash"`
+	Size        int64  `json:"size"`
+}
+
+func (c *AdriveClient) completeFile(ctx context.Context, reqBody *CompleteFileReq) (*CompleteFileResp, error) {
+	respBody := &CompleteFileResp{}
+	_, err := c.request("/v2/file/complete", reqBody, respBody)
+	if err != nil {
+		return nil, err
+	}
+
+	return respBody, nil
 }
 
 func (c *AdriveClient) trashFile(ctx context.Context, fileId string) error {
