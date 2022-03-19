@@ -97,6 +97,10 @@ func (u *Uploader) Write(p []byte) (n int, err error) {
 		}
 	}()
 
+	remainBytes := u.maxWriteBytes - u.nw
+	if int64(len(p)) > remainBytes {
+		p = p[:remainBytes]
+	}
 	return u.wc.Write(p)
 }
 

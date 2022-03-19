@@ -275,7 +275,7 @@ type CreateFileReq struct {
 }
 
 type UploadPartInfo struct {
-	PartNumber int64  `json:"part_number"`
+	PartNumber int    `json:"part_number"`
 	PartSize   int64  `json:"part_size"`
 	UploadUrl  string `json:"upload_url"`
 }
@@ -366,4 +366,31 @@ func (fs *FileSystem) updateFileName(fileId string, newFileName string) error {
 	respBody := EmptyStruct{}
 	_, err := fs.request("/v2/file/update", reqBody, &respBody)
 	return err
+}
+
+type GetUploadUrlResp struct {
+	DriveId      string           `json:"drive_id"`
+	FileId       string           `json:"file_id"`
+	UploadId     string           `json:"upload_id"`
+	PartInfoList []UploadPartInfo `json:"part_info_list"`
+}
+
+func (fs *FileSystem) getUploadUrl(driveId, fileId, uploadId string, partNum int) (*GetUploadUrlResp, error) {
+	reqBody := map[string]interface{}{
+		"drive_id":  driveId,
+		"file_id":   fileId,
+		"upload_Id": uploadId,
+		"part_info_list": []UploadPartInfo{
+			{
+				PartNumber: partNum,
+			},
+		},
+	}
+
+	respBody := &GetUploadUrlResp{}
+	_, err := fs.request("/v2/file/get_upload_url", reqBody, respBody)
+	if err != nil {
+		return nil, err
+	}
+	return respBody, nil
 }
