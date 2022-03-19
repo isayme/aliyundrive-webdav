@@ -9,17 +9,16 @@ import (
 	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/net/webdav"
 )
 
 var showVersion bool
 var listenPort uint16
 var logLevel string
-var refreshToken string
 
 func init() {
 	rootCmd.Flags().Uint16VarP(&listenPort, "port", "p", 8080, "listen port")
-	rootCmd.Flags().StringVarP(&refreshToken, "refresh_token", "t", "", "your refresh token")
 	rootCmd.Flags().StringVarP(&logLevel, "level", "l", "info", "log level")
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "show version")
 }
@@ -34,6 +33,22 @@ var rootCmd = &cobra.Command{
 
 		logger.SetFormat("console")
 		logger.SetLevel(logLevel)
+
+		viper.SetConfigName("runtime")
+		viper.AddConfigPath("/data")
+		viper.AddConfigPath(".")
+
+		err := viper.ReadInConfig()
+		if err != nil {
+			logger.Errorf("读配置文件失败: %v", err)
+			return
+		}
+
+		refreshToken := viper.GetString(adrive.REFRESH_TOKEN)
+		if refreshToken == "" {
+			logger.Errorf("配置 REFRESH_TOKEN 不存在")
+			return
+		}
 
 		fs, err := adrive.NewFileSystem(refreshToken)
 		if err != nil {

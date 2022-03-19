@@ -1,6 +1,10 @@
 package adrive
 
 var (
+	REFRESH_TOKEN = "REFRESH_TOKEN"
+)
+
+var (
 	ROOT_FOLDER_ID = "root"
 
 	FILE_TYPE_FILE   = "file"

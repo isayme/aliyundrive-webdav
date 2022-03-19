@@ -24,7 +24,8 @@ services:
   aliyundrive-webdav:
     container_name: aliyundrive-webdav
     image: isayme/aliyundrive-webdav:latest
-    command: /app/aliyundrive-webdav --refresh_token='YOUR REFRESH TOKEN'
+    volumes:
+      - ./path/to/data:/data
     ports:
       - '8080:8080'
 ```

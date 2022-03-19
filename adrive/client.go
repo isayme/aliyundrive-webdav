@@ -14,6 +14,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
+	"github.com/spf13/viper"
 )
 
 var client *resty.Client
@@ -136,6 +137,12 @@ func (fs *FileSystem) doRefreshToken() (*RefreshTokenResp, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	viper.Set(REFRESH_TOKEN, respBody.RefreshToken)
+	if err := viper.WriteConfig(); err != nil {
+		logger.Errorf("保存 refresh_token 失败: %s", err)
+	}
+
 	return respBody, nil
 }
 

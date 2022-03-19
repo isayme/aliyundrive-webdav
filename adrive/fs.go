@@ -39,6 +39,20 @@ func NewFileSystem(refreshToken string) (*FileSystem, error) {
 
 	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
 
+	go func() {
+		// 每小时获取一次个人信息, 以避免长时间无使用导致 refresh_token 无法刷新失效.
+		for {
+			time.Sleep(time.Hour)
+
+			user, err := fs.getLoginUser()
+			if err != nil {
+				logger.Warnf("自动保活失败: %v", err)
+			} else {
+				logger.Infof("自动保活成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
+			}
+		}
+	}()
+
 	return fs, nil
 }
 

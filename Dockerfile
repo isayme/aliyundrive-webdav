@@ -21,6 +21,8 @@ ENV APP_NAME ${APP_NAME}
 ARG APP_VERSION
 ENV APP_VERSION ${APP_VERSION}
 
+VOLUME [ "/data" ]
+
 COPY --from=builder /app/dist/aliyundrive-webdav ./
 
 CMD ["/app/aliyundrive-webdav"]
