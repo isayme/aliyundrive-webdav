@@ -14,6 +14,11 @@
 - [x] 文件上传
 
 # 如何使用
+## 配置文件 /path/to/runtime.env
+文件内容如下:
+```
+REFRESH_TOKEN=你的刷新token
+```
 
 ## Docker Compose
 
@@ -25,7 +30,7 @@ services:
     container_name: aliyundrive-webdav
     image: isayme/aliyundrive-webdav:latest
     volumes:
-      - ./path/to/data:/data
+      - ./path/to/data/runtime.env:/data/runtime.env
     ports:
       - '8080:8080'
 ```
