@@ -201,7 +201,6 @@ func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) 
 	for _, item := range respBody.Items {
 		item.path = path.Join(file.path, item.FileName)
 		item.fs = fs
-		fs.fileCache.Set(item.path, item, 0)
 	}
 
 	return respBody.Items, nil

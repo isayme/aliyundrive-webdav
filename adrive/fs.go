@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/isayme/go-logger"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"golang.org/x/net/webdav"
 	"golang.org/x/sync/singleflight"
@@ -21,15 +20,13 @@ type FileSystem struct {
 	accessTokenExpireTime time.Time
 	fileDriveId           string
 
-	sg        *singleflight.Group
-	fileCache *cache.Cache
+	sg *singleflight.Group
 }
 
 func NewFileSystem(refreshToken string) (*FileSystem, error) {
 	fs := &FileSystem{
 		refreshToken: refreshToken,
 		sg:           &singleflight.Group{},
-		fileCache:    cache.New(time.Second*10, time.Second),
 	}
 
 	user, err := fs.getLoginUser()
@@ -84,14 +81,8 @@ func (fs *FileSystem) isInvalidFileName(name string) bool {
 func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 	name = fs.resolve(name)
 
-	if v, ok := fs.fileCache.Get(name); ok {
-		file := v.(*File)
-		return file.Clone(), nil
-	}
-
 	if name == "" || name == "/" {
 		root := fs.rootFolder()
-		fs.fileCache.Set(name, root, -1)
 		return root, nil
 	}
 
@@ -106,7 +97,6 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 
 	file.path = name
 	file.fs = fs
-	fs.fileCache.Set(name, file, 0)
 	return file, nil
 }
 
@@ -181,7 +171,6 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			path:         name,
 		}
 
-		fs.fileCache.Set(name, file, 0)
 		return file, nil
 	}
 
@@ -200,8 +189,6 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 			logger.Infof("删除文件 '%s' 成功", name)
 		}
 	}()
-
-	fs.fileCache.Delete(name)
 
 	file, err := fs.getFile(ctx, name)
 	if err != nil {
@@ -235,9 +222,6 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 
 	oldName = fs.resolve(oldName)
 	newName = fs.resolve(newName)
-
-	fs.fileCache.Delete(oldName)
-	fs.fileCache.Delete(newName)
 
 	sourceFile, err := fs.getFile(ctx, oldName)
 	if err != nil {
