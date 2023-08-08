@@ -8,49 +8,157 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dghubble/trie"
 	"github.com/isayme/go-logger"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/pkg/errors"
 	"golang.org/x/net/webdav"
 	"golang.org/x/sync/singleflight"
 )
 
+var _ webdav.FileSystem = &FileSystem{}
+
 type FileSystem struct {
+	clientId     string
+	clientSecret string
+
 	refreshToken          string
 	accessToken           string
 	accessTokenExpireTime time.Time
 	fileDriveId           string
 
-	sg *singleflight.Group
+	sg   *singleflight.Group
+	root *trie.PathTrie
 }
 
-func NewFileSystem(refreshToken string) (*FileSystem, error) {
+func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 	fs := &FileSystem{
-		refreshToken: refreshToken,
+		clientId:     clientId,
+		clientSecret: clientSecret,
 		sg:           &singleflight.Group{},
+		root:         trie.NewPathTrie(),
 	}
 
-	user, err := fs.getLoginUser()
+	refreshToken, err := readRefreshToken()
 	if err != nil {
 		return nil, err
 	}
 
-	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
+	if refreshToken != "" {
+		fs.refreshToken = refreshToken
+		refreshTokenResp, err := fs.doRefreshToken()
+		if err != nil {
+			logger.Warnf("使用 refreshToken 刷新 token 失败: %v", err)
+		} else {
+			fs.accessToken = refreshTokenResp.AccessToken
+			fs.refreshToken = refreshTokenResp.RefreshToken
+			fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
+			fs.writeRefreshToken()
+		}
+	}
+
+	if fs.accessToken == "" {
+		qrCodeResp, err := fs.getQrCode()
+		if err != nil {
+			return nil, err
+		}
+
+		qrCodeText := "https://www.aliyundrive.com/o/oauth/authorize?sid=" + qrCodeResp.Sid
+		qrterminal.GenerateWithConfig(qrCodeText, qrterminal.Config{
+			Level:          qrterminal.L,
+			Writer:         os.Stdout,
+			HalfBlocks:     true,
+			BlackChar:      qrterminal.BLACK_BLACK,
+			WhiteChar:      qrterminal.WHITE_WHITE,
+			WhiteBlackChar: qrterminal.WHITE_BLACK,
+			BlackWhiteChar: qrterminal.BLACK_WHITE,
+			QuietZone:      2,
+		})
+
+		done := false
+
+		for {
+			if done {
+				break
+			}
+
+			qrCodeStatusResp, err := fs.getQrCodeStatus(qrCodeResp.Sid)
+			if err != nil {
+				return nil, err
+			}
+
+			switch qrCodeStatusResp.Status {
+			case qrCodeStatusWaitLogin:
+				logger.Info("等待扫码...")
+				time.Sleep(time.Second)
+			case qrCodeStatusScanSuccess:
+				logger.Info("已扫码成功")
+				time.Sleep(time.Second)
+			case qrCodeStatusLoginSuccess:
+				logger.Info("已登录成功")
+
+				refreshTokenResp, err := fs.doRefreshTokenByAuthCode(qrCodeStatusResp.AuthCode)
+				if err != nil {
+					return nil, err
+				}
+				fs.accessToken = refreshTokenResp.AccessToken
+				fs.refreshToken = refreshTokenResp.RefreshToken
+				fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
+				fs.writeRefreshToken()
+				done = true
+			case qrCodeStatusQRCodeExpired:
+				return nil, fmt.Errorf("二维码过期")
+			}
+		}
+	}
+
+	user, err := fs.getCurrentUser()
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.Name, user.Id)
+
+	driveInfo, err := fs.getDriveInfo()
+	if err != nil {
+		return nil, err
+	}
+	fs.fileDriveId = driveInfo.BackupDriveId
+
+	fs.root.Put("/", fs.rootFolder())
 
 	go func() {
 		// 每小时获取一次个人信息, 以避免长时间无使用导致 refresh_token 无法刷新失效.
 		for {
 			time.Sleep(time.Hour)
 
-			user, err := fs.getLoginUser()
+			user, err := fs.getCurrentUser()
 			if err != nil {
 				logger.Warnf("自动保活失败: %v", err)
 			} else {
-				logger.Infof("自动保活成功, 当前账号昵称: %s, ID: %s", user.NickName, user.UserId)
+				logger.Infof("自动保活成功, 当前账号昵称: %s, ID: %s", user.Name, user.Id)
 			}
 		}
 	}()
 
 	return fs, nil
+}
+
+func (fs *FileSystem) writeRefreshToken() {
+	err := writeRefreshToken(fs.refreshToken)
+	if err != nil {
+		logger.Warnf("写 refreshToken 失败: %v", err)
+	}
+}
+
+func (fs *FileSystem) cleanTrie(prefix string) {
+	fs.root.Walk(func(key string, value interface{}) error {
+		if strings.HasPrefix(key, prefix) {
+			fs.root.Delete(key)
+		}
+
+		return nil
+	})
 }
 
 func (fs *FileSystem) resolve(name string) string {
@@ -59,7 +167,6 @@ func (fs *FileSystem) resolve(name string) string {
 
 func (fs *FileSystem) rootFolder() *File {
 	return &File{
-		path:      "/",
 		fs:        fs,
 		FileName:  "/",
 		FileId:    ROOT_FOLDER_ID,
@@ -71,9 +178,9 @@ func (fs *FileSystem) rootFolder() *File {
 }
 
 func (fs *FileSystem) isInvalidFileName(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
+	// if strings.HasPrefix(name, ".") {
+	// 	return true
+	// }
 
 	return false
 }
@@ -95,8 +202,6 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
 		return nil, err
 	}
 
-	file.path = name
-	file.fs = fs
 	return file, nil
 }
 
@@ -116,10 +221,12 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		return err
 	}
 
-	_, err = fs.createFolder(ctx, path.Base(name), parentFolder.FileId)
+	folder, err := fs.createFolder(ctx, path.Base(name), parentFolder.FileId)
 	if err != nil {
 		return err
 	}
+
+	fs.root.Put(name, folder)
 
 	return nil
 }
@@ -168,9 +275,9 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			Type:         FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
 			fs:           fs,
-			path:         name,
 		}
 
+		fs.root.Put(name, file)
 		return file, nil
 	}
 
@@ -178,6 +285,7 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 	if err != nil {
 		return nil, err
 	}
+	fs.root.Put(name, file)
 	return file, nil
 }
 
@@ -189,6 +297,8 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 			logger.Infof("删除文件 '%s' 成功", name)
 		}
 	}()
+
+	fs.cleanTrie(name)
 
 	file, err := fs.getFile(ctx, name)
 	if err != nil {
@@ -222,6 +332,9 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 
 	oldName = fs.resolve(oldName)
 	newName = fs.resolve(newName)
+
+	fs.cleanTrie(oldName)
+	fs.cleanTrie(newName)
 
 	sourceFile, err := fs.getFile(ctx, oldName)
 	if err != nil {
@@ -265,5 +378,5 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (fi os.FileInfo, er
 		return nil, err
 	}
 
-	return file.Stat()
+	return file, nil
 }

@@ -15,3 +15,5 @@
 # vendor/
 
 runtime.env
+*.db
+config/dev.yaml

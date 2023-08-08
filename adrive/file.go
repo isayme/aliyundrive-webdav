@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"github.com/isayme/go-logger"
+	"golang.org/x/net/webdav"
 )
+
+var _ fs.FileInfo = &File{}
+var _ webdav.File = &File{}
 
 type File struct {
 	FileName     string    `json:"name"`
@@ -19,28 +23,12 @@ type File struct {
 	FileId       string    `json:"file_id"`
 	ParentFileId string    `json:"parent_file_id"`
 
-	path string
-	fs   *FileSystem
+	fs *FileSystem
 
 	rsc io.ReadSeekCloser
 	wc  io.WriteCloser
 
 	lock sync.Mutex
-}
-
-func (f *File) Clone() *File {
-	return &File{
-		FileName:     f.FileName,
-		FileSize:     f.FileSize,
-		UpdatedAt:    f.UpdatedAt,
-		Type:         f.Type,
-		DriveId:      f.DriveId,
-		FileId:       f.FileId,
-		ParentFileId: f.ParentFileId,
-
-		fs:   f.fs,
-		path: f.path,
-	}
 }
 
 func (f *File) Close() error {
@@ -97,17 +85,7 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (f *File) Stat() (fs.FileInfo, error) {
-	var mode fs.FileMode = 0660
-	if f.Type == FILE_TYPE_FOLDER {
-		mode = mode | fs.ModeDir
-	}
-
-	return &StatInfo{
-		name:      f.FileName,
-		size:      f.FileSize,
-		updatedAt: f.UpdatedAt,
-		mode:      mode,
-	}, nil
+	return f, nil
 }
 
 func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
@@ -126,9 +104,37 @@ func (f *File) Readdir(count int) (result []fs.FileInfo, err error) {
 
 	result = make([]fs.FileInfo, len(files))
 	for idx, file := range files {
-		si, _ := file.Stat()
-		result[idx] = si
+		result[idx] = file
 	}
 
 	return result, nil
+}
+
+func (f *File) Name() string {
+	return f.FileName
+}
+
+func (f *File) Size() int64 {
+	return f.FileSize
+}
+
+func (f *File) Mode() fs.FileMode {
+	var mode fs.FileMode = 0660
+	if f.IsDir() {
+		mode = mode | fs.ModeDir
+	}
+
+	return mode
+}
+
+func (f *File) ModTime() time.Time {
+	return f.UpdatedAt
+}
+
+func (f *File) IsDir() bool {
+	return f.Type == FILE_TYPE_FOLDER
+}
+
+func (f *File) Sys() any {
+	return nil
 }

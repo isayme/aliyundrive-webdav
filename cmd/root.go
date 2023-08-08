@@ -9,7 +9,6 @@ import (
 	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/net/webdav"
 )
 
@@ -34,25 +33,11 @@ var rootCmd = &cobra.Command{
 		logger.SetFormat("console")
 		logger.SetLevel(logLevel)
 
-		viper.SetConfigName("runtime")
-		viper.AddConfigPath("/data")
-		viper.AddConfigPath(".")
+		conf := adrive.Get()
 
-		err := viper.ReadInConfig()
+		fs, err := adrive.NewFileSystem(conf.AlipanConfig.ClientId, conf.AlipanConfig.ClientSecret)
 		if err != nil {
-			logger.Errorf("读配置文件失败: %v", err)
-			return
-		}
-
-		refreshToken := viper.GetString(adrive.REFRESH_TOKEN)
-		if refreshToken == "" {
-			logger.Errorf("配置 REFRESH_TOKEN 不存在")
-			return
-		}
-
-		fs, err := adrive.NewFileSystem(refreshToken)
-		if err != nil {
-			logger.Errorf("初始化失败: %v", err)
+			logger.Errorf("启动失败: %v", err)
 			return
 		}
 

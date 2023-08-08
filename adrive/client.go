@@ -9,12 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-logger"
-	"github.com/spf13/viper"
 )
 
 var client *resty.Client
@@ -68,22 +68,31 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func (fs *FileSystem) request(path string, body, out interface{}) (errResp *ErrorResponse, err error) {
+func (fs *FileSystem) requestWithAccessToken(method, path string, body, out interface{}) (errResp *ErrorResponse, err error) {
+	accessToken, err := fs.getAccessToken()
+	if err != nil {
+		return
+	}
+
+	headers := make(map[string]string)
+	headers["Authorization"] = fmt.Sprintf("Bearer %s", accessToken)
+
+	return fs.request(method, path, headers, body, out)
+}
+
+func (fs *FileSystem) request(method, path string, headers map[string]string, body, out interface{}) (errResp *ErrorResponse, err error) {
 	defer func() {
 		logger.Debugf("Request %s, reqBody: %v, respBody: %v, err: %v, errResp: %v", path, util.Stringify(body), util.Stringify(out), err, errResp)
 	}()
 
 	url := fmt.Sprintf("%s%s", ALIYUNDRIVE_API_HOST, path)
 
-	var accessToken string
-	if path != "/token/refresh" {
-		accessToken, err = fs.getAccessToken()
-		if err != nil {
-			return nil, err
-		}
+	req := client.R()
+	if headers != nil {
+		req = req.SetHeaders(headers)
 	}
 
-	resp, err := client.R().SetHeader(HEADER_AUTHORIZATION, accessToken).SetDoNotParseResponse(true).SetBody(body).Post(url)
+	resp, err := req.SetDoNotParseResponse(true).SetBody(body).Execute(method, url)
 	if err != nil {
 		return nil, err
 	}
@@ -115,32 +124,45 @@ func (fs *FileSystem) request(path string, body, out interface{}) (errResp *Erro
 	}
 
 	if errResp.Code != "NotFound.File" {
-		logger.Warnw("requestFail", "err", err, "statusCode", statusCode, "reqBody", body, "respBody", errResp)
+		logger.Warnw("requestFail", "err", err, "path", path, "statusCode", statusCode, "reqBody", body, "respBody", errResp)
 	}
 
 	return errResp, fmt.Errorf("requestFail, code: %s/%d", errResp.Code, statusCode)
 }
 
 type RefreshTokenResp struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	FileDriveId  string    `json:"default_drive_id"`
-	ExpireTime   time.Time `json:"expire_time"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"` // 单位秒
 }
 
 func (fs *FileSystem) doRefreshToken() (*RefreshTokenResp, error) {
 	reqBody := map[string]string{
+		"client_id":     fs.clientId,
+		"client_secret": fs.clientSecret,
+		"grant_type":    "refresh_token",
 		"refresh_token": fs.refreshToken,
 	}
 	respBody := &RefreshTokenResp{}
-	_, err := fs.request("/token/refresh", reqBody, respBody)
+	_, err := fs.request(METHOD_POST, API_OAUTH_ACCESS_TOKEN, nil, reqBody, respBody)
 	if err != nil {
 		return nil, err
 	}
 
-	viper.Set(REFRESH_TOKEN, respBody.RefreshToken)
-	if err := viper.WriteConfig(); err != nil {
-		logger.Errorf("保存 refresh_token 失败: %s", err)
+	return respBody, nil
+}
+
+func (fs *FileSystem) doRefreshTokenByAuthCode(authCode string) (*RefreshTokenResp, error) {
+	reqBody := map[string]string{
+		"client_id":     fs.clientId,
+		"client_secret": fs.clientSecret,
+		"grant_type":    "authorization_code",
+		"code":          authCode,
+	}
+	respBody := &RefreshTokenResp{}
+	_, err := fs.request(METHOD_POST, API_OAUTH_ACCESS_TOKEN, nil, reqBody, respBody)
+	if err != nil {
+		return nil, err
 	}
 
 	return respBody, nil
@@ -156,24 +178,43 @@ func (fs *FileSystem) getAccessToken() (string, error) {
 
 		fs.accessToken = refreshTokenResp.AccessToken
 		fs.refreshToken = refreshTokenResp.RefreshToken
-		fs.accessTokenExpireTime = refreshTokenResp.ExpireTime
-		fs.fileDriveId = refreshTokenResp.FileDriveId
+		fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
+		writeRefreshToken(fs.refreshToken)
+
 		logger.Info("刷新 token 成功")
 	}
 
 	return fs.accessToken, nil
 }
 
-type User struct {
-	UserId   string `json:"user_id"`
-	NickName string `json:"nick_name"`
+type GetDriveInfoResp struct {
+	DefaultDriveId  string `json:"default_drive_id"`
+	ResourceDriveId string `json:"resource_drive_id"`
+	BackupDriveId   string `json:"backup_drive_id"`
 }
 
-func (fs *FileSystem) getLoginUser() (*User, error) {
+func (fs *FileSystem) getDriveInfo() (*GetDriveInfoResp, error) {
+	reqBody := EmptyStruct{}
+
+	respBody := GetDriveInfoResp{}
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_GET_DRIVE_INFO, reqBody, &respBody)
+	if err != nil {
+		return nil, err
+	}
+
+	return &respBody, nil
+}
+
+type User struct {
+	Id   string `json:"id"`   // 用户ID
+	Name string `json:"name"` // 用户昵称
+}
+
+func (fs *FileSystem) getCurrentUser() (*User, error) {
 	reqBody := EmptyStruct{}
 
 	respBody := User{}
-	_, err := fs.request("/v2/user/get", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_GET, API_OAUTH_USER_INFO, reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -186,51 +227,79 @@ type ListFileResp struct {
 	NextMarker string  `json:"next_marker"`
 }
 
-func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) {
-	reqBody := map[string]string{
-		"drive_id":       file.DriveId,
-		"parent_file_id": file.FileId,
-	}
+func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*File, error) {
+	result, err, _ := fs.sg.Do(fmt.Sprintf("listFolder-%s", parentFileId), func() (interface{}, error) {
+		logger.Infof("listFolder %s", parentFileId)
 
-	respBody := ListFileResp{}
-	_, err := fs.request("/v2/file/list", reqBody, &respBody)
+		reqBody := map[string]interface{}{
+			"drive_id":       fs.fileDriveId,
+			"parent_file_id": parentFileId,
+			"limit":          100,
+		}
+		respBody := ListFileResp{}
+		_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_LIST, reqBody, &respBody)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, item := range respBody.Items {
+			item.fs = fs
+		}
+
+		return respBody.Items, nil
+	})
+
+	return result.([]*File), err
+}
+
+func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) {
+	items, err := fs.listFolder(ctx, file.FileId)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, item := range respBody.Items {
-		item.path = path.Join(file.path, item.FileName)
-		item.fs = fs
-	}
-
-	return respBody.Items, nil
+	return items, nil
 }
 
 func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*File, error) {
-	reqBody := map[string]string{
-		"drive_id":  fs.fileDriveId,
-		"file_path": name,
+	if name != "/" {
+		name = strings.TrimRight(name, "/")
 	}
 
-	file := &File{}
-	errResp, err := fs.request("/v2/file/get_by_path", reqBody, file)
-	if err != nil && errResp != nil && errResp.Code == "NotFound.File" {
-		return nil, os.ErrNotExist
+	if v := fs.root.Get(name); v != nil {
+		return v.(*File), nil
 	}
 
+	dir, fileName := path.Split(name)
+	parent, err := fs.getFileByPath(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
 
-	file.fs = fs
-	file.path = name
+	files, err := fs.listFolder(ctx, parent.FileId)
+	if err != nil {
+		return nil, err
+	}
+
+	var file *File = nil
+	for _, item := range files {
+		if item.IsDir() {
+			fs.root.Put(path.Join(dir, item.Name()), item)
+		}
+		if item.Name() == fileName {
+			file = item
+		}
+	}
+
+	if file == nil {
+		return nil, os.ErrNotExist
+	}
 
 	return file, nil
 }
 
 type GetFileDownloadUrlResp struct {
 	Url        string    `json:"url"`
-	Size       int64     `json:"size"`
 	Expiration time.Time `json:"expiration"`
 }
 
@@ -240,8 +309,10 @@ func (fs *FileSystem) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, er
 		"file_id":  fileId,
 	}
 
+	logger.Infof("getDownloadUrl %s", fileId)
+
 	respBody := GetFileDownloadUrlResp{}
-	_, err := fs.request("/v2/file/get_download_url", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_GET_DOWNLOAD_URL, reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -259,13 +330,12 @@ func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileI
 	}
 
 	file := &File{}
-	_, err := fs.request("/v2/file/create", reqBody, file)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_CREATE, reqBody, file)
 	if err != nil {
 		return nil, err
 	}
 
 	file.fs = fs
-	file.path = name
 	return file, nil
 }
 
@@ -295,7 +365,7 @@ type CreateFileResp struct {
 
 func (fs *FileSystem) createFile(ctx context.Context, reqBody *CreateFileReq) (*CreateFileResp, error) {
 	respBody := CreateFileResp{}
-	_, err := fs.request("/adrive/v2/file/createWithFolders", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_CREATE, reqBody, &respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +379,7 @@ func (fs *FileSystem) deleteFile(ctx context.Context, driveId, fileId string) er
 		"file_id":  fileId,
 	}
 	respBody := EmptyStruct{}
-	_, err := fs.request("/v2/file/delete", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_DELETE, reqBody, &respBody)
 	if err != nil {
 		return err
 	}
@@ -330,7 +400,7 @@ type CompleteFileResp struct {
 
 func (fs *FileSystem) completeFile(ctx context.Context, reqBody *CompleteFileReq) (*CompleteFileResp, error) {
 	respBody := &CompleteFileResp{}
-	_, err := fs.request("/v2/file/complete", reqBody, respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_COMPLETE, reqBody, respBody)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +415,7 @@ func (fs *FileSystem) trashFile(ctx context.Context, fileId string) error {
 	}
 
 	respBody := EmptyStruct{}
-	_, err := fs.request("/v2/recyclebin/trash", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_TRASH, reqBody, &respBody)
 	return err
 }
 
@@ -359,18 +429,19 @@ func (fs *FileSystem) moveFile(fileId string, newParentFolderId string, newFileN
 		"new_name":          newFileName,
 	}
 	respBody := EmptyStruct{}
-	_, err := fs.request("/v2/file/move", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_MOVE, reqBody, &respBody)
 	return err
 }
 
 func (fs *FileSystem) updateFileName(fileId string, newFileName string) error {
 	reqBody := map[string]interface{}{
-		"drive_id": fs.fileDriveId,
-		"file_id":  fileId,
-		"name":     newFileName,
+		"drive_id":        fs.fileDriveId,
+		"file_id":         fileId,
+		"name":            newFileName,
+		"check_name_mode": CHECK_NAME_MODE_REFUSE,
 	}
 	respBody := EmptyStruct{}
-	_, err := fs.request("/v2/file/update", reqBody, &respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_UPDATE, reqBody, &respBody)
 	return err
 }
 
@@ -385,7 +456,7 @@ func (fs *FileSystem) getUploadUrl(driveId, fileId, uploadId string, partNum int
 	reqBody := map[string]interface{}{
 		"drive_id":  driveId,
 		"file_id":   fileId,
-		"upload_Id": uploadId,
+		"upload_id": uploadId,
 		"part_info_list": []UploadPartInfo{
 			{
 				PartNumber: partNum,
@@ -394,7 +465,40 @@ func (fs *FileSystem) getUploadUrl(driveId, fileId, uploadId string, partNum int
 	}
 
 	respBody := &GetUploadUrlResp{}
-	_, err := fs.request("/v2/file/get_upload_url", reqBody, respBody)
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_GET_UPLOAD_URL, reqBody, respBody)
+	if err != nil {
+		return nil, err
+	}
+	return respBody, nil
+}
+
+type GetQrCodeResp struct {
+	QrCodeUrl string `json:"qrCodeUrl"`
+	Sid       string `json:"sid"`
+}
+
+func (fs *FileSystem) getQrCode() (*GetQrCodeResp, error) {
+	reqBody := map[string]interface{}{
+		"client_id":     fs.clientId,
+		"client_secret": fs.clientSecret,
+		"scopes":        []string{"user:base", "file:all:read", "file:all:write"},
+	}
+	respBody := &GetQrCodeResp{}
+	_, err := fs.request(METHOD_POST, API_OAUTH_AUTHORIZE_QRCODE, nil, reqBody, respBody)
+	if err != nil {
+		return nil, err
+	}
+	return respBody, nil
+}
+
+type GetQrCodeStatusResp struct {
+	Status   string `json:"status"`
+	AuthCode string `json:"authCode"`
+}
+
+func (fs *FileSystem) getQrCodeStatus(sid string) (*GetQrCodeStatusResp, error) {
+	respBody := &GetQrCodeStatusResp{}
+	_, err := fs.request(METHOD_GET, fmt.Sprintf("/oauth/qrcode/%s/status", sid), nil, nil, respBody)
 	if err != nil {
 		return nil, err
 	}
