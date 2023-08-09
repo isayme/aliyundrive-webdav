@@ -11,6 +11,7 @@ import (
 	"github.com/dghubble/trie"
 	"github.com/isayme/go-logger"
 	"github.com/mdp/qrterminal/v3"
+	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"golang.org/x/net/webdav"
 	"golang.org/x/sync/singleflight"
@@ -29,6 +30,8 @@ type FileSystem struct {
 
 	sg   *singleflight.Group
 	root *trie.PathTrie
+
+	c *cache.Cache
 }
 
 func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
@@ -37,6 +40,7 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 		clientSecret: clientSecret,
 		sg:           &singleflight.Group{},
 		root:         trie.NewPathTrie(),
+		c:            cache.New(5*time.Minute, 10*time.Minute),
 	}
 
 	refreshToken, err := readRefreshToken()
@@ -379,4 +383,17 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (fi os.FileInfo, er
 	}
 
 	return file, nil
+}
+
+func (fs *FileSystem) cacheSetDownloadUrl(contentHash string, downloadUrl string, duration time.Duration) {
+	fs.c.Set(fmt.Sprintf("downloadUrl-%s", contentHash), downloadUrl, duration)
+}
+
+func (fs *FileSystem) cacheGetDownloadUrl(contentHash string) string {
+	v, ok := fs.c.Get(fmt.Sprintf("downloadUrl-%s", contentHash))
+	if ok {
+		return v.(string)
+	}
+
+	return ""
 }

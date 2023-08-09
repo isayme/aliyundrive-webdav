@@ -18,6 +18,7 @@ type File struct {
 	FileName     string    `json:"name"`
 	FileSize     int64     `json:"size"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	ContentHash  string    `json:"content_hash"`
 	Type         string    `json:"type"`
 	DriveId      string    `json:"drive_id"`
 	FileId       string    `json:"file_id"`

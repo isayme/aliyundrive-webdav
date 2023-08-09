@@ -249,7 +249,11 @@ func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*F
 		return respBody.Items, nil
 	})
 
-	return result.([]*File), err
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*File), nil
 }
 
 func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) {
@@ -283,9 +287,7 @@ func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*File, er
 
 	var file *File = nil
 	for _, item := range files {
-		if item.IsDir() {
-			fs.root.Put(path.Join(dir, item.Name()), item)
-		}
+		fs.root.Put(path.Join(dir, item.Name()), item)
 		if item.Name() == fileName {
 			file = item
 		}
@@ -303,21 +305,25 @@ type GetFileDownloadUrlResp struct {
 	Expiration time.Time `json:"expiration"`
 }
 
-func (fs *FileSystem) getDownloadUrl(fileId string) (*GetFileDownloadUrlResp, error) {
+func (fs *FileSystem) getDownloadUrl(fileId, contentHash string) (string, error) {
+	downloadUrl := fs.cacheGetDownloadUrl(contentHash)
+	if downloadUrl != "" {
+		return downloadUrl, nil
+	}
+
 	reqBody := map[string]string{
 		"drive_id": fs.fileDriveId,
 		"file_id":  fileId,
 	}
 
-	logger.Infof("getDownloadUrl %s", fileId)
-
 	respBody := GetFileDownloadUrlResp{}
 	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_GET_DOWNLOAD_URL, reqBody, &respBody)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return &respBody, nil
+	fs.cacheSetDownloadUrl(contentHash, respBody.Url, respBody.Expiration.Sub(time.Now()))
+	return respBody.Url, nil
 }
 
 func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileId string) (*File, error) {

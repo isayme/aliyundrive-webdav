@@ -111,6 +111,7 @@ func (fwc *FileWriteCloser) Write(p []byte) (n int, err error) {
 	defer fwc.lock.Unlock()
 
 	defer func() {
+		fwc.file.FileSize = fwc.file.FileSize + int64(n)
 		fwc.hash.Write(p[:n])
 	}()
 
