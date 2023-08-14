@@ -169,9 +169,8 @@ func (fs *FileSystem) resolve(name string) string {
 	return strings.TrimRight(name, "/")
 }
 
-func (fs *FileSystem) rootFolder() *File {
-	return &File{
-		fs:        fs,
+func (fs *FileSystem) rootFolder() *FileInfo {
+	return &FileInfo{
 		FileName:  "/",
 		FileId:    ROOT_FOLDER_ID,
 		DriveId:   fs.fileDriveId,
@@ -189,7 +188,7 @@ func (fs *FileSystem) isInvalidFileName(name string) bool {
 	return false
 }
 
-func (fs *FileSystem) getFile(ctx context.Context, name string) (*File, error) {
+func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, error) {
 	name = fs.resolve(name)
 
 	if name == "" || name == "/" {
@@ -272,17 +271,16 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			return nil, errors.Wrap(err, "获取父文件夹失败")
 		}
 
-		file := &File{
+		file := &FileInfo{
 			FileName:     fileName,
 			ParentFileId: parentFolder.FileId,
 			DriveId:      parentFolder.DriveId,
 			Type:         FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
-			fs:           fs,
 		}
 
 		fs.root.Put(name, file)
-		return file, nil
+		return NewWritableFile(file, fs)
 	}
 
 	file, err := fs.getFile(ctx, name)
@@ -290,7 +288,7 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 		return nil, err
 	}
 	fs.root.Put(name, file)
-	return file, nil
+	return NewReadableFile(file, fs), nil
 }
 
 func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {

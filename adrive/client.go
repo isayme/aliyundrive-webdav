@@ -223,14 +223,12 @@ func (fs *FileSystem) getCurrentUser() (*User, error) {
 }
 
 type ListFileResp struct {
-	Items      []*File `json:"items"`
-	NextMarker string  `json:"next_marker"`
+	Items      []*FileInfo `json:"items"`
+	NextMarker string      `json:"next_marker"`
 }
 
-func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*File, error) {
+func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*FileInfo, error) {
 	result, err, _ := fs.sg.Do(fmt.Sprintf("listFolder-%s", parentFileId), func() (interface{}, error) {
-		logger.Infof("listFolder %s", parentFileId)
-
 		reqBody := map[string]interface{}{
 			"drive_id":       fs.fileDriveId,
 			"parent_file_id": parentFileId,
@@ -242,10 +240,6 @@ func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*F
 			return nil, err
 		}
 
-		for _, item := range respBody.Items {
-			item.fs = fs
-		}
-
 		return respBody.Items, nil
 	})
 
@@ -253,11 +247,11 @@ func (fs *FileSystem) listFolder(ctx context.Context, parentFileId string) ([]*F
 		return nil, err
 	}
 
-	return result.([]*File), nil
+	return result.([]*FileInfo), nil
 }
 
-func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) {
-	items, err := fs.listFolder(ctx, file.FileId)
+func (fs *FileSystem) listDir(ctx context.Context, fi *FileInfo) ([]*FileInfo, error) {
+	items, err := fs.listFolder(ctx, fi.FileId)
 	if err != nil {
 		return nil, err
 	}
@@ -265,13 +259,13 @@ func (fs *FileSystem) listDir(ctx context.Context, file *File) ([]*File, error) 
 	return items, nil
 }
 
-func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*File, error) {
+func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*FileInfo, error) {
 	if name != "/" {
 		name = strings.TrimRight(name, "/")
 	}
 
 	if v := fs.root.Get(name); v != nil {
-		return v.(*File), nil
+		return v.(*FileInfo), nil
 	}
 
 	dir, fileName := path.Split(name)
@@ -285,19 +279,19 @@ func (fs *FileSystem) getFileByPath(ctx context.Context, name string) (*File, er
 		return nil, err
 	}
 
-	var file *File = nil
+	var fi *FileInfo = nil
 	for _, item := range files {
 		fs.root.Put(path.Join(dir, item.Name()), item)
 		if item.Name() == fileName {
-			file = item
+			fi = item
 		}
 	}
 
-	if file == nil {
+	if fi == nil {
 		return nil, os.ErrNotExist
 	}
 
-	return file, nil
+	return fi, nil
 }
 
 type GetFileDownloadUrlResp struct {
@@ -326,7 +320,7 @@ func (fs *FileSystem) getDownloadUrl(fileId, contentHash string) (string, error)
 	return respBody.Url, nil
 }
 
-func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileId string) (*File, error) {
+func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileId string) (*FileInfo, error) {
 	reqBody := map[string]string{
 		"drive_id":        fs.fileDriveId,
 		"name":            name,
@@ -335,14 +329,13 @@ func (fs *FileSystem) createFolder(ctx context.Context, name string, parentFileI
 		"check_name_mode": CHECK_NAME_MODE_REFUSE,
 	}
 
-	file := &File{}
-	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_CREATE, reqBody, file)
+	fi := &FileInfo{}
+	_, err := fs.requestWithAccessToken(METHOD_POST, API_FILE_CREATE, reqBody, fi)
 	if err != nil {
 		return nil, err
 	}
 
-	file.fs = fs
-	return file, nil
+	return fi, nil
 }
 
 type CreateFileReq struct {
