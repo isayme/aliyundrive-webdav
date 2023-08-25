@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/isayme/aliyundrive-webdav/util"
+	"github.com/isayme/go-alipanopen"
 	"github.com/isayme/go-logger"
 )
 
@@ -53,9 +54,9 @@ func NewUploader(uploadUrl string, maxWriteBytes int64) (*Uploader, error) {
 		defer rc.Close()
 
 		headers := http.Header{}
-		headers.Set(HEADER_USER_AGENT, util.UserAgent)
-		headers.Set(HEADER_HOST, URL.Host)
-		headers.Set(HEADER_REFERER, ALIYUNDRIVE_HOST)
+		headers.Set(alipanopen.HEADER_USER_AGENT, util.UserAgent)
+		headers.Set(alipanopen.HEADER_HOST, URL.Host)
+		headers.Set(alipanopen.HEADER_REFERER, ALIYUNDRIVE_HOST)
 		req.Header = headers
 
 		resp, err := http.DefaultClient.Do(req)

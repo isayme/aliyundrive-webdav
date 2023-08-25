@@ -9,8 +9,17 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.3.0
 	github.com/spf13/viper v1.10.1
-	golang.org/x/net v0.0.0-20220225172249-27dd8689420f
+	golang.org/x/net v0.14.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+)
+
+require (
+	github.com/briandowns/spinner v1.23.0 // indirect
+	github.com/fatih/color v1.15.0 // indirect
+	github.com/isayme/go-ora v0.0.0-20230825132613-932847f4ef97 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
+	golang.org/x/term v0.11.0 // indirect
 )
 
 require (
@@ -19,6 +28,7 @@ require (
 	github.com/fsnotify/fsnotify v1.5.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
+	github.com/isayme/go-alipanopen v0.1.1
 	github.com/isayme/go-config v0.1.0 // indirect
 	github.com/magiconair/properties v1.8.5 // indirect
 	github.com/mdp/qrterminal/v3 v3.1.1 // indirect
@@ -30,8 +40,8 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.2.0 // indirect
-	golang.org/x/sys v0.8.0 // indirect
-	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/sys v0.11.0 // indirect
+	golang.org/x/text v0.12.0 // indirect
 	gopkg.in/ini.v1 v1.66.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0 // indirect

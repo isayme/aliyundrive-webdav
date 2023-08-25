@@ -9,121 +9,76 @@ import (
 	"time"
 
 	"github.com/dghubble/trie"
+	"github.com/isayme/go-alipanopen"
 	"github.com/isayme/go-logger"
-	"github.com/mdp/qrterminal/v3"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"golang.org/x/net/webdav"
 	"golang.org/x/sync/singleflight"
 )
 
+const ALIYUNDRIVE_HOST = "https://www.aliyundrive.com"
+
 var _ webdav.FileSystem = &FileSystem{}
 
 type FileSystem struct {
 	clientId     string
 	clientSecret string
+	client       *alipanopen.Client
+	fileDriveId  string
+
+	cache *cache.Cache
+	root  *trie.PathTrie
+	sg    *singleflight.Group
 
 	refreshToken          string
 	accessToken           string
 	accessTokenExpireTime time.Time
-	fileDriveId           string
-
-	sg   *singleflight.Group
-	root *trie.PathTrie
-
-	c *cache.Cache
 }
 
 func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
+	ctx := context.Background()
+
+	client := alipanopen.NewClient()
+	client.SetRestyClient(restyClient)
+
 	fs := &FileSystem{
 		clientId:     clientId,
 		clientSecret: clientSecret,
-		sg:           &singleflight.Group{},
-		root:         trie.NewPathTrie(),
-		c:            cache.New(5*time.Minute, 10*time.Minute),
+
+		client: client,
+		cache:  cache.New(5*time.Minute, 10*time.Minute),
+		root:   trie.NewPathTrie(),
+		sg:     &singleflight.Group{},
 	}
 
 	refreshToken, err := readRefreshToken()
 	if err != nil {
 		return nil, err
 	}
+	fs.refreshToken = refreshToken
 
 	if refreshToken != "" {
-		fs.refreshToken = refreshToken
-		refreshTokenResp, err := fs.doRefreshToken()
+		refreshTokenResp, err := fs.client.RefreshToken(ctx, clientId, clientSecret, refreshToken)
 		if err != nil {
 			logger.Warnf("使用 refreshToken 刷新 token 失败: %v", err)
 		} else {
-			fs.accessToken = refreshTokenResp.AccessToken
-			fs.refreshToken = refreshTokenResp.RefreshToken
-			fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
-			fs.writeRefreshToken()
+			fs.saveToken(refreshTokenResp)
 		}
 	}
 
-	if fs.accessToken == "" {
-		qrCodeResp, err := fs.getQrCode()
-		if err != nil {
-			return nil, err
-		}
-
-		qrCodeText := "https://www.aliyundrive.com/o/oauth/authorize?sid=" + qrCodeResp.Sid
-		qrterminal.GenerateWithConfig(qrCodeText, qrterminal.Config{
-			Level:          qrterminal.L,
-			Writer:         os.Stdout,
-			HalfBlocks:     true,
-			BlackChar:      qrterminal.BLACK_BLACK,
-			WhiteChar:      qrterminal.WHITE_WHITE,
-			WhiteBlackChar: qrterminal.WHITE_BLACK,
-			BlackWhiteChar: qrterminal.BLACK_WHITE,
-			QuietZone:      2,
-		})
-
-		done := false
-
-		for {
-			if done {
-				break
-			}
-
-			qrCodeStatusResp, err := fs.getQrCodeStatus(qrCodeResp.Sid)
-			if err != nil {
-				return nil, err
-			}
-
-			switch qrCodeStatusResp.Status {
-			case qrCodeStatusWaitLogin:
-				logger.Info("等待扫码...")
-				time.Sleep(time.Second)
-			case qrCodeStatusScanSuccess:
-				logger.Info("已扫码成功")
-				time.Sleep(time.Second)
-			case qrCodeStatusLoginSuccess:
-				logger.Info("已登录成功")
-
-				refreshTokenResp, err := fs.doRefreshTokenByAuthCode(qrCodeStatusResp.AuthCode)
-				if err != nil {
-					return nil, err
-				}
-				fs.accessToken = refreshTokenResp.AccessToken
-				fs.refreshToken = refreshTokenResp.RefreshToken
-				fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
-				fs.writeRefreshToken()
-				done = true
-			case qrCodeStatusQRCodeExpired:
-				return nil, fmt.Errorf("二维码过期")
-			}
-		}
-	}
-
-	user, err := fs.getCurrentUser()
+	err = fs.authIfRequired(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	user, err := fs.client.GetCurrentUser(ctx)
+	if err != nil {
+		return nil, err
+	}
 	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.Name, user.Id)
 
-	driveInfo, err := fs.getDriveInfo()
+	driveInfo, err := fs.client.GetDriveInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -132,15 +87,17 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 	fs.root.Put("/", fs.rootFolder())
 
 	go func() {
-		// 每小时获取一次个人信息, 以避免长时间无使用导致 refresh_token 无法刷新失效.
+		// 每小时刷新一次 access_token , 以避免长时间无使用导致 access_token、refresh_token 过期.
 		for {
 			time.Sleep(time.Hour)
 
-			user, err := fs.getCurrentUser()
+			refreshTokenResp, err := fs.client.RefreshToken(context.Background(), fs.clientId, fs.clientSecret, fs.refreshToken)
 			if err != nil {
 				logger.Warnf("自动保活失败: %v", err)
 			} else {
-				logger.Infof("自动保活成功, 当前账号昵称: %s, ID: %s", user.Name, user.Id)
+				logger.Infof("自动保活成功")
+				fs.saveToken(refreshTokenResp)
+				fs.client.SetAccessToken(fs.accessToken)
 			}
 		}
 	}()
@@ -148,8 +105,16 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 	return fs, nil
 }
 
-func (fs *FileSystem) writeRefreshToken() {
-	err := writeRefreshToken(fs.refreshToken)
+func (fs *FileSystem) saveToken(refreshTokenResp *alipanopen.RefreshTokenResp) {
+	fs.accessToken = refreshTokenResp.AccessToken
+	fs.refreshToken = refreshTokenResp.RefreshToken
+	fs.accessTokenExpireTime = time.Now().Add(time.Second * time.Duration(refreshTokenResp.ExpiresIn))
+	fs.client.SetAccessToken(fs.accessToken)
+	fs.writeRefreshToken(refreshTokenResp.RefreshToken)
+}
+
+func (fs *FileSystem) writeRefreshToken(refreshToken string) {
+	err := writeRefreshToken(refreshToken)
 	if err != nil {
 		logger.Warnf("写 refreshToken 失败: %v", err)
 	}
@@ -170,22 +135,15 @@ func (fs *FileSystem) resolve(name string) string {
 }
 
 func (fs *FileSystem) rootFolder() *FileInfo {
-	return &FileInfo{
+	file := &alipanopen.File{
 		FileName:  "/",
-		FileId:    ROOT_FOLDER_ID,
+		FileId:    alipanopen.ROOT_FOLDER_ID,
 		DriveId:   fs.fileDriveId,
 		FileSize:  0,
 		UpdatedAt: time.Now(),
-		Type:      FILE_TYPE_FOLDER,
+		Type:      alipanopen.FILE_TYPE_FOLDER,
 	}
-}
-
-func (fs *FileSystem) isInvalidFileName(name string) bool {
-	// if strings.HasPrefix(name, ".") {
-	// 	return true
-	// }
-
-	return false
+	return NewFileInfo(file)
 }
 
 func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, error) {
@@ -196,11 +154,7 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, erro
 		return root, nil
 	}
 
-	if fs.isInvalidFileName(path.Base(name)) {
-		return nil, os.ErrInvalid
-	}
-
-	file, err := fs.getFileByPath(ctx, name)
+	file, err := fs.getFileByPath(ctx, fs.fileDriveId, name)
 	if err != nil {
 		return nil, err
 	}
@@ -224,12 +178,16 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		return err
 	}
 
-	folder, err := fs.createFolder(ctx, path.Base(name), parentFolder.FileId)
+	reqBody := &alipanopen.CreateFolderReq{
+		DriveId:       parentFolder.DriveId,
+		ParentFileId:  parentFolder.FileId,
+		Name:          path.Base(name),
+		CheckNameMode: alipanopen.CHECK_NAME_MODE_REFUSE,
+	}
+	_, err = fs.client.CreateFolder(ctx, reqBody)
 	if err != nil {
 		return err
 	}
-
-	fs.root.Put(name, folder)
 
 	return nil
 }
@@ -262,24 +220,19 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 	if flag&os.O_CREATE > 0 {
 		fileName := path.Base(name)
 
-		if fs.isInvalidFileName(fileName) {
-			return nil, os.ErrPermission
-		}
-
 		parentFolder, err := fs.getFile(ctx, path.Dir(name))
 		if err != nil {
 			return nil, errors.Wrap(err, "获取父文件夹失败")
 		}
 
-		file := &FileInfo{
+		file := NewFileInfo(&alipanopen.File{
 			FileName:     fileName,
 			ParentFileId: parentFolder.FileId,
 			DriveId:      parentFolder.DriveId,
-			Type:         FILE_TYPE_FILE,
+			Type:         alipanopen.FILE_TYPE_FILE,
 			UpdatedAt:    time.Now(),
-		}
+		})
 
-		fs.root.Put(name, file)
 		return NewWritableFile(file, fs)
 	}
 
@@ -287,7 +240,7 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 	if err != nil {
 		return nil, err
 	}
-	fs.root.Put(name, file)
+
 	return NewReadableFile(file, fs), nil
 }
 
@@ -310,17 +263,7 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 		return err
 	}
 
-	// 新文件, 还没有文件ID
-	if file.FileId == "" {
-		// logger.Errorf("删除文件 '%s' 失败: 文件还未创建完成", name)
-		return nil
-	}
-
-	if file.FileId == ROOT_FOLDER_ID {
-		return fmt.Errorf("根目录不允许删除")
-	}
-
-	return fs.trashFile(ctx, file.FileId)
+	return fs.client.TrashFile(ctx, file.DriveId, file.FileId)
 }
 
 func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err error) {
@@ -347,7 +290,13 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 	newFileName := path.Base(newName)
 
 	if path.Dir(oldName) == newFolder {
-		err := fs.updateFileName(sourceFile.FileId, newFileName)
+		reqBody := &alipanopen.UpdateFileNameReq{
+			DriveId:       sourceFile.DriveId,
+			FileId:        sourceFile.FileId,
+			Name:          newFileName,
+			CheckNameMode: alipanopen.CHECK_NAME_MODE_REFUSE,
+		}
+		err := fs.client.UpdateFileName(ctx, reqBody)
 		if err != nil {
 			return errors.Wrapf(err, "重命名")
 		}
@@ -357,7 +306,14 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 			return errors.Wrapf(err, "获取目的父文件夹失败")
 		}
 
-		err = fs.moveFile(sourceFile.FileId, newParentFolder.FileId, newFileName)
+		reqBody := &alipanopen.MoveFileReq{
+			DriveId:        sourceFile.DriveId,
+			FileId:         sourceFile.FileId,
+			NewName:        newFileName,
+			ToParentFileId: newParentFolder.FileId,
+			CheckNameMode:  alipanopen.CHECK_NAME_MODE_REFUSE,
+		}
+		err = fs.client.MoveFile(ctx, reqBody)
 		if err != nil {
 			return errors.Wrapf(err, "移动失败")
 		}
@@ -383,15 +339,97 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (fi os.FileInfo, er
 	return file, nil
 }
 
+func (fs *FileSystem) genDownloadUrlCacheKey(contentHash string) string {
+	return fmt.Sprintf("downloadUrl-%s", contentHash)
+}
+
 func (fs *FileSystem) cacheSetDownloadUrl(contentHash string, downloadUrl string, duration time.Duration) {
-	fs.c.Set(fmt.Sprintf("downloadUrl-%s", contentHash), downloadUrl, duration)
+	fs.cache.Set(fs.genDownloadUrlCacheKey(contentHash), downloadUrl, duration)
 }
 
 func (fs *FileSystem) cacheGetDownloadUrl(contentHash string) string {
-	v, ok := fs.c.Get(fmt.Sprintf("downloadUrl-%s", contentHash))
+	v, ok := fs.cache.Get(fs.genDownloadUrlCacheKey(contentHash))
 	if ok {
 		return v.(string)
 	}
 
 	return ""
+}
+
+func (fs *FileSystem) getDownloadUrl(driveId, fileId, contentHash string) (string, error) {
+	downloadUrl := fs.cacheGetDownloadUrl(contentHash)
+	if downloadUrl != "" {
+		return downloadUrl, nil
+	}
+
+	resp, err := fs.client.GetDownloadUrl(context.Background(), driveId, fileId)
+	if err != nil {
+		return "", err
+	}
+
+	fs.cacheSetDownloadUrl(contentHash, resp.Url, resp.Expiration.Sub(time.Now()))
+	return resp.Url, nil
+}
+
+func (fs *FileSystem) getFileByPath(ctx context.Context, driveId, name string) (*FileInfo, error) {
+	if name != "/" {
+		name = strings.TrimRight(name, "/")
+	}
+
+	if v := fs.root.Get(name); v != nil {
+		return v.(*FileInfo), nil
+	}
+
+	dir, fileName := path.Split(name)
+	parent, err := fs.getFileByPath(ctx, driveId, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	reqBody := &alipanopen.ListFileReq{
+		DriveId:      driveId,
+		ParentFileId: parent.FileId,
+		Limit:        100,
+	}
+	files, err := fs.client.ListFolder(ctx, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	var fi *FileInfo = nil
+	for _, item := range files {
+
+		fs.root.Put(path.Join(dir, item.FileName), NewFileInfo(item))
+		if item.FileName == fileName {
+			fi = NewFileInfo(item)
+		}
+	}
+
+	if fi == nil {
+		return nil, os.ErrNotExist
+	}
+
+	return fi, nil
+}
+
+func (fs *FileSystem) listDir(ctx context.Context, fi *FileInfo) ([]*FileInfo, error) {
+	result, err, _ := fs.sg.Do(fmt.Sprintf("listDir-%s", fi.FileId), func() (interface{}, error) {
+		reqBody := &alipanopen.ListFileReq{
+			DriveId:      fi.DriveId,
+			ParentFileId: fi.FileId,
+			Limit:        100,
+		}
+		return fs.client.ListFolder(ctx, reqBody)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	files := result.([]*alipanopen.File)
+	fis := make([]*FileInfo, len(files))
+	for idx, file := range files {
+		fis[idx] = NewFileInfo(file)
+	}
+	return fis, nil
 }

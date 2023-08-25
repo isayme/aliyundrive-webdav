@@ -3,19 +3,20 @@ package adrive
 import (
 	"io/fs"
 	"time"
+
+	"github.com/isayme/go-alipanopen"
 )
 
 var _ fs.FileInfo = &FileInfo{}
 
 type FileInfo struct {
-	FileName     string    `json:"name"`
-	FileSize     int64     `json:"size"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	ContentHash  string    `json:"content_hash"`
-	Type         string    `json:"type"`
-	DriveId      string    `json:"drive_id"`
-	FileId       string    `json:"file_id"`
-	ParentFileId string    `json:"parent_file_id"`
+	*alipanopen.File
+}
+
+func NewFileInfo(file *alipanopen.File) *FileInfo {
+	return &FileInfo{
+		File: file,
+	}
 }
 
 func (f *FileInfo) Name() string {
@@ -40,7 +41,7 @@ func (f *FileInfo) ModTime() time.Time {
 }
 
 func (f *FileInfo) IsDir() bool {
-	return f.Type == FILE_TYPE_FOLDER
+	return f.Type == alipanopen.FILE_TYPE_FOLDER
 }
 
 func (f *FileInfo) Sys() any {

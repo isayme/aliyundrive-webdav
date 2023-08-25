@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/isayme/go-alipanopen"
 	"github.com/isayme/go-logger"
 	"github.com/pkg/errors"
 	"golang.org/x/net/webdav"
@@ -49,15 +50,15 @@ func NewWritableFile(fi *FileInfo, fs *FileSystem) (*WritableFile, error) {
 		hash:           sha1.New(),
 	}
 
-	reqBody := CreateFileReq{
+	reqBody := alipanopen.CreateFileReq{
 		Name:          writableFile.fi.FileName,
-		CheckNameMode: CHECK_NAME_MODE_REFUSE,
+		CheckNameMode: alipanopen.CHECK_NAME_MODE_REFUSE,
 		DriveId:       writableFile.fi.DriveId,
 		ParentFileId:  writableFile.fi.ParentFileId,
-		Type:          FILE_TYPE_FILE,
+		Type:          alipanopen.FILE_TYPE_FILE,
 		Size:          0,
 	}
-	respBody, err := writableFile.fs.createFile(ctx, &reqBody)
+	respBody, err := writableFile.fs.client.CreateFile(ctx, &reqBody)
 	if err != nil {
 		logger.Errorf("创建文件 '%s' 失败: %v", writableFile.fi.FileName, err)
 		return nil, err
@@ -76,7 +77,7 @@ func NewWritableFile(fi *FileInfo, fs *FileSystem) (*WritableFile, error) {
 }
 
 func (writableFile *WritableFile) tryDeleteFile() {
-	err := writableFile.fs.deleteFile(context.Background(), writableFile.fi.DriveId, writableFile.fi.FileId)
+	err := writableFile.fs.client.DeleteFile(context.Background(), writableFile.fi.DriveId, writableFile.fi.FileId)
 	if err != nil {
 		logger.Infof("删除文件 '%s' 失败: %v", writableFile.fi.FileName, err)
 	} else {
@@ -94,7 +95,18 @@ func (writableFile *WritableFile) getNextUploader() (err error) {
 	}()
 
 	writableFile.currentPartNum = writableFile.currentPartNum + 1
-	getUploadUrlResp, err := writableFile.fs.getUploadUrl(writableFile.fi.DriveId, writableFile.fi.FileId, writableFile.uploadId, writableFile.currentPartNum)
+
+	reqBody := &alipanopen.GetUploadUrlReq{
+		DriveId:  writableFile.fi.DriveId,
+		FileId:   writableFile.fi.FileId,
+		UploadId: writableFile.uploadId,
+		PartInfoList: []alipanopen.GetUploadPartInfoReq{
+			{
+				PartNumber: writableFile.currentPartNum,
+			},
+		},
+	}
+	getUploadUrlResp, err := writableFile.fs.client.GetUploadUrl(context.Background(), reqBody)
 	if err != nil {
 		return err
 	}
@@ -145,7 +157,7 @@ func (writableFile *WritableFile) Close() (err error) {
 	writableFile.lock.Lock()
 	defer writableFile.lock.Unlock()
 
-	var result *CompleteFileResp
+	var result *alipanopen.CompleteFileResp
 	defer func() {
 		if err != nil {
 			logger.Errorf("上传文件 '%s' 失败: %v", writableFile.fi.FileName, err)
@@ -168,7 +180,7 @@ func (writableFile *WritableFile) Close() (err error) {
 		}
 	}
 
-	result, err = writableFile.fs.completeFile(context.Background(), &CompleteFileReq{
+	result, err = writableFile.fs.client.CompleteFile(context.Background(), &alipanopen.CompleteFileReq{
 		DriveId:  writableFile.fi.DriveId,
 		FileId:   writableFile.fi.FileId,
 		UploadId: writableFile.uploadId,

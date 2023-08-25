@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"sync"
 
+	"github.com/isayme/go-alipanopen"
 	"github.com/isayme/go-logger"
 	"golang.org/x/net/webdav"
 )
@@ -42,7 +43,7 @@ func (readableFile *ReadableFile) Read(p []byte) (n int, err error) {
 	}()
 
 	if readableFile.rc == nil {
-		downloadUrl, err := readableFile.fs.getDownloadUrl(readableFile.fi.FileId, readableFile.fi.ContentHash)
+		downloadUrl, err := readableFile.fs.getDownloadUrl(readableFile.fi.DriveId, readableFile.fi.FileId, readableFile.fi.ContentHash)
 		if err != nil {
 			logger.Errorf("获取文件 '%s' 下载链接失败: %v", readableFile.fi.Name(), err)
 			return 0, err
@@ -53,15 +54,15 @@ func (readableFile *ReadableFile) Read(p []byte) (n int, err error) {
 		}
 
 		headers := map[string]string{
-			HEADER_ACCEPT: "*/*",
+			alipanopen.HEADER_ACCEPT: "*/*",
 		}
 		if readableFile.pos > 0 {
 			headerRange := fmt.Sprintf("bytes=%d-", readableFile.pos)
-			headers[HEADER_RANGE] = headerRange
+			headers[alipanopen.HEADER_RANGE] = headerRange
 		}
 
 		logger.Debugf("Read(%s/%s) Pos %d", readableFile.fi.Name(), readableFile.fi.FileId, readableFile.pos)
-		resp, err := client.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(downloadUrl)
+		resp, err := restyClient.R().SetDoNotParseResponse(true).SetHeaders(headers).Get(downloadUrl)
 		if err != nil {
 			logger.Warnf("打开文件 '%s' 下载链接失败: %v", readableFile.fi.Name(), err)
 			return 0, err
