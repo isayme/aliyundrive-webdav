@@ -23,9 +23,11 @@ version: '3'
 services:
   aliyundrive-webdav:
     container_name: aliyundrive-webdav
-    image: isayme/aliyundrive-webdav:latest
+    image: isayme/aliyundrive-webdav:0.2.1
     volumes:
       - ./path/to/data:/data
+    environment:
+      CONF_FILE_PATH: '/data/config.yaml'
     ports:
-      - '8080:8080'
+      - '4918:8080'
 ```
