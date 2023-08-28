@@ -77,7 +77,11 @@ func NewWritableFile(fi *FileInfo, fs *FileSystem) (*WritableFile, error) {
 }
 
 func (writableFile *WritableFile) tryDeleteFile() {
-	err := writableFile.fs.client.DeleteFile(context.Background(), writableFile.fi.DriveId, writableFile.fi.FileId)
+	reqBody := &alipanopen.DeleteFileReq{
+		DriveId: writableFile.fi.DriveId,
+		FileId:  writableFile.fi.FileId,
+	}
+	err := writableFile.fs.client.DeleteFile(context.Background(), reqBody)
 	if err != nil {
 		logger.Infof("删除文件 '%s' 失败: %v", writableFile.fi.FileName, err)
 	} else {

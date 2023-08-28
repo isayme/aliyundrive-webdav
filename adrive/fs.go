@@ -59,7 +59,13 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 	fs.refreshToken = refreshToken
 
 	if refreshToken != "" {
-		refreshTokenResp, err := fs.client.RefreshToken(ctx, clientId, clientSecret, refreshToken)
+		reqBody := &alipanopen.RefreshTokenReq{
+			ClientId:     clientId,
+			ClientSecret: clientSecret,
+			RefreshToken: refreshToken,
+			GrantType:    alipanopen.GRANT_TYPE_REFRESH_TOKEN,
+		}
+		refreshTokenResp, err := fs.client.RefreshToken(ctx, reqBody)
 		if err != nil {
 			logger.Warnf("使用 refreshToken 刷新 token 失败: %v", err)
 		} else {
@@ -91,7 +97,13 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 		for {
 			time.Sleep(time.Hour)
 
-			refreshTokenResp, err := fs.client.RefreshToken(context.Background(), fs.clientId, fs.clientSecret, fs.refreshToken)
+			reqBody := &alipanopen.RefreshTokenReq{
+				ClientId:     fs.clientId,
+				ClientSecret: fs.clientSecret,
+				RefreshToken: fs.refreshToken,
+				GrantType:    alipanopen.GRANT_TYPE_REFRESH_TOKEN,
+			}
+			refreshTokenResp, err := fs.client.RefreshToken(context.Background(), reqBody)
 			if err != nil {
 				logger.Warnf("自动保活失败: %v", err)
 			} else {
@@ -263,7 +275,11 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 		return err
 	}
 
-	return fs.client.TrashFile(ctx, file.DriveId, file.FileId)
+	reqBody := &alipanopen.TrashFileReq{
+		DriveId: file.DriveId,
+		FileId:  file.FileId,
+	}
+	return fs.client.TrashFile(ctx, reqBody)
 }
 
 func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err error) {
@@ -362,7 +378,11 @@ func (fs *FileSystem) getDownloadUrl(driveId, fileId, contentHash string) (strin
 		return downloadUrl, nil
 	}
 
-	resp, err := fs.client.GetDownloadUrl(context.Background(), driveId, fileId)
+	reqBody := &alipanopen.GetFileDownloadUrlReq{
+		DriveId: driveId,
+		FileId:  fileId,
+	}
+	resp, err := fs.client.GetDownloadUrl(context.Background(), reqBody)
 	if err != nil {
 		return "", err
 	}

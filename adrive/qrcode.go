@@ -16,7 +16,11 @@ func (fs *FileSystem) authIfRequired(ctx context.Context) error {
 		return nil
 	}
 
-	qrCodeResp, err := fs.client.GetQrCode(ctx, fs.clientId, fs.clientSecret)
+	reqBody := &alipanopen.GetQrCodeReq{
+		ClientId:     fs.clientId,
+		ClientSecret: fs.clientSecret,
+	}
+	qrCodeResp, err := fs.client.GetQrCode(ctx, reqBody)
 	if err != nil {
 		return err
 	}
@@ -60,7 +64,13 @@ func (fs *FileSystem) authIfRequired(ctx context.Context) error {
 		case alipanopen.QRCODE_STATUS_LOGINSUCCESS:
 			ora.Succeed("已登录成功")
 
-			refreshTokenResp, err := fs.client.RefreshTokenByAuthCode(ctx, fs.clientId, fs.clientSecret, qrCodeStatusResp.AuthCode)
+			reqBody := &alipanopen.RefreshTokenReq{
+				ClientId:     fs.clientId,
+				ClientSecret: fs.clientSecret,
+				GrantType:    alipanopen.GRANT_TYPE_AUTHORIZATION_CODE,
+				Code:         qrCodeStatusResp.AuthCode,
+			}
+			refreshTokenResp, err := fs.client.RefreshToken(ctx, reqBody)
 			if err != nil {
 				return err
 			}
