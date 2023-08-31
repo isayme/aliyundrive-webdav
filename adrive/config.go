@@ -7,6 +7,8 @@ import (
 )
 
 type AlipanConfig struct {
+	RootDir string `json:"rootDir" yaml:"rootDir"` // 根目录
+
 	ClientId     string `json:"clientId" yaml:"clientId"`
 	ClientSecret string `json:"clientSecret" yaml:"clientSecret"`
 }

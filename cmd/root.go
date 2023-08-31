@@ -35,7 +35,7 @@ var rootCmd = &cobra.Command{
 
 		conf := adrive.Get()
 
-		fs, err := adrive.NewFileSystem(conf.AlipanConfig.ClientId, conf.AlipanConfig.ClientSecret)
+		fs, err := adrive.NewFileSystem(conf.AlipanConfig)
 		if err != nil {
 			logger.Errorf("启动失败: %v", err)
 			return

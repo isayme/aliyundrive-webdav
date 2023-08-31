@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dghubble/trie"
+	"github.com/isayme/aliyundrive-webdav/util"
 	"github.com/isayme/go-alipanopen"
 	"github.com/isayme/go-logger"
 	"github.com/patrickmn/go-cache"
@@ -22,6 +23,9 @@ const ALIYUNDRIVE_HOST = "https://www.aliyundrive.com"
 var _ webdav.FileSystem = &FileSystem{}
 
 type FileSystem struct {
+	rootDir  string
+	rootFile *FileInfo
+
 	clientId     string
 	clientSecret string
 	client       *alipanopen.Client
@@ -36,8 +40,13 @@ type FileSystem struct {
 	accessTokenExpireTime time.Time
 }
 
-func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
+func NewFileSystem(config AlipanConfig) (*FileSystem, error) {
 	ctx := context.Background()
+
+	clientId := config.ClientId
+	clientSecret := config.ClientSecret
+	rootDir := config.RootDir
+	rootDir = path.Join(rootDir, "/")
 
 	client := alipanopen.NewClient()
 	client.SetRestyClient(restyClient)
@@ -83,15 +92,39 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 		return nil, err
 	}
 	logger.Infof("认证成功, 当前账号昵称: %s, ID: %s", user.Name, user.Id)
-
 	driveInfo, err := fs.client.GetDriveInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 	fs.fileDriveId = driveInfo.BackupDriveId
 
-	fs.root.Put("/", fs.rootFolder())
+	if rootDir != "/" {
+		reqBody := &alipanopen.GetFileByPathReq{
+			DriveId:  fs.fileDriveId,
+			FilePath: rootDir,
+		}
+		rootFolder, err := fs.client.GetFileByPath(ctx, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		fs.rootDir = rootDir
+		fs.rootFile = NewFileInfo(rootFolder)
+	} else {
+		fs.rootFile = NewFileInfo(&alipanopen.File{
+			FileName: util.Name,
+			DriveId:  fs.fileDriveId,
+			FileId:   alipanopen.ROOT_FOLDER_ID,
+			Type:     alipanopen.FILE_TYPE_FOLDER,
+		})
+	}
+	fs.root.Put(rootDir, fs.rootFile)
 
+	fs.startKeepAlive()
+
+	return fs, nil
+}
+
+func (fs *FileSystem) startKeepAlive() {
 	go func() {
 		// 每小时刷新一次 access_token , 以避免长时间无使用导致 access_token、refresh_token 过期.
 		for {
@@ -113,8 +146,6 @@ func NewFileSystem(clientId, clientSecret string) (*FileSystem, error) {
 			}
 		}
 	}()
-
-	return fs, nil
 }
 
 func (fs *FileSystem) saveToken(refreshTokenResp *alipanopen.RefreshTokenResp) {
@@ -143,27 +174,12 @@ func (fs *FileSystem) cleanTrie(prefix string) {
 }
 
 func (fs *FileSystem) resolve(name string) string {
-	return strings.TrimRight(name, "/")
-}
-
-func (fs *FileSystem) rootFolder() *FileInfo {
-	file := &alipanopen.File{
-		FileName:  "/",
-		FileId:    alipanopen.ROOT_FOLDER_ID,
-		DriveId:   fs.fileDriveId,
-		FileSize:  0,
-		UpdatedAt: time.Now(),
-		Type:      alipanopen.FILE_TYPE_FOLDER,
-	}
-	return NewFileInfo(file)
+	return path.Join(fs.rootDir, name)
 }
 
 func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, error) {
-	name = fs.resolve(name)
-
 	if name == "" || name == "/" {
-		root := fs.rootFolder()
-		return root, nil
+		return fs.rootFile, nil
 	}
 
 	file, err := fs.getFileByPath(ctx, fs.fileDriveId, name)
@@ -216,8 +232,6 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 		}
 	}()
 
-	name = fs.resolve(name)
-
 	if flag&(os.O_SYNC|os.O_APPEND) > 0 {
 		return nil, os.ErrInvalid
 	}
@@ -228,6 +242,8 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			return nil, errors.Wrap(err, "删除源文件失败")
 		}
 	}
+
+	name = fs.resolve(name)
 
 	if flag&os.O_CREATE > 0 {
 		fileName := path.Base(name)
@@ -264,6 +280,8 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 			logger.Infof("删除文件 '%s' 成功", name)
 		}
 	}()
+
+	name = fs.resolve(name)
 
 	fs.cleanTrie(name)
 
@@ -347,6 +365,8 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (fi os.FileInfo, er
 		}
 	}()
 
+	name = fs.resolve(name)
+
 	file, err := fs.getFile(ctx, name)
 	if err != nil {
 		return nil, err
@@ -411,14 +431,13 @@ func (fs *FileSystem) getFileByPath(ctx context.Context, driveId, name string) (
 		ParentFileId: parent.FileId,
 		Limit:        100,
 	}
-	files, err := fs.client.ListFolder(ctx, reqBody)
+	listFileResp, err := fs.client.ListFolder(ctx, reqBody)
 	if err != nil {
 		return nil, err
 	}
 
 	var fi *FileInfo = nil
-	for _, item := range files {
-
+	for _, item := range listFileResp.Items {
 		fs.root.Put(path.Join(dir, item.FileName), NewFileInfo(item))
 		if item.FileName == fileName {
 			fi = NewFileInfo(item)
@@ -439,7 +458,12 @@ func (fs *FileSystem) listDir(ctx context.Context, fi *FileInfo) ([]*FileInfo, e
 			ParentFileId: fi.FileId,
 			Limit:        100,
 		}
-		return fs.client.ListFolder(ctx, reqBody)
+		listFileResp, err := fs.client.ListFolder(ctx, reqBody)
+		if err != nil {
+			return nil, err
+		}
+
+		return listFileResp.Items, nil
 	})
 
 	if err != nil {

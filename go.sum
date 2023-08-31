@@ -235,8 +235,8 @@ github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/inconshreveable/mousetrap v1.0.0 h1:Z8tu5sraLXCXIcARxBp/8cbvlwVa7Z1NHg9XEKhtSvM=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
-github.com/isayme/go-alipanopen v0.3.0 h1:ngbyGReTKtR6lElfxn0D4WG0NRdN8gjb7kJDrolXVuw=
-github.com/isayme/go-alipanopen v0.3.0/go.mod h1:fVLT3235jRPUn46BSk3Ujkob4QfrEil6myFJ0UROJOw=
+github.com/isayme/go-alipanopen v0.4.0 h1:VRp+63YBV86jnd8Hrx+k1q1eaW9JhezIJRzFB2cAKyY=
+github.com/isayme/go-alipanopen v0.4.0/go.mod h1:fVLT3235jRPUn46BSk3Ujkob4QfrEil6myFJ0UROJOw=
 github.com/isayme/go-config v0.1.0 h1:V7Y6jUMohcokytim+2E/ZuFOB8tih7gl6XSmwGDyB78=
 github.com/isayme/go-config v0.1.0/go.mod h1:cROTfZ5LJpsAb0CQszCNt5PzlPUjJuXRLxqVji4nc4M=
 github.com/isayme/go-logger v0.3.0 h1:u21QxGZLQNxPPPXylvE6udoQr/3T3dWtexRQERo0p+E=
