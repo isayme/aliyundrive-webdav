@@ -10,12 +10,14 @@ import (
 var _ fs.FileInfo = &FileInfo{}
 
 type FileInfo struct {
+	fileMode fs.FileMode
 	*alipanopen.File
 }
 
-func NewFileInfo(file *alipanopen.File) *FileInfo {
+func NewFileInfo(file *alipanopen.File, fileMode fs.FileMode) *FileInfo {
 	return &FileInfo{
-		File: file,
+		File:     file,
+		fileMode: fileMode,
 	}
 }
 
@@ -28,7 +30,7 @@ func (f *FileInfo) Size() int64 {
 }
 
 func (f *FileInfo) Mode() fs.FileMode {
-	var mode fs.FileMode = 0660
+	var mode fs.FileMode = f.fileMode
 	if f.IsDir() {
 		mode = mode | fs.ModeDir
 	}

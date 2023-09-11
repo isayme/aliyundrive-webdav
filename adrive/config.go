@@ -9,6 +9,8 @@ import (
 type AlipanConfig struct {
 	RootDir string `json:"rootDir" yaml:"rootDir"` // 根目录
 
+	Readonly bool `json:"readonly" yaml:"readonly"` // 只读模式
+
 	ClientId     string `json:"clientId" yaml:"clientId"`
 	ClientSecret string `json:"clientSecret" yaml:"clientSecret"`
 }

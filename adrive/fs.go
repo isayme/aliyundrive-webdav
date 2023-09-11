@@ -3,6 +3,7 @@ package adrive
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"strings"
@@ -26,6 +27,9 @@ type FileSystem struct {
 	rootDir  string
 	rootFile *FileInfo
 
+	readonly        bool
+	defaultFileMode fs.FileMode
+
 	clientId     string
 	clientSecret string
 	client       *alipanopen.Client
@@ -45,15 +49,22 @@ func NewFileSystem(config AlipanConfig) (*FileSystem, error) {
 
 	clientId := config.ClientId
 	clientSecret := config.ClientSecret
+	readonly := config.Readonly
 	rootDir := config.RootDir
 	rootDir = path.Join(rootDir, "/")
 
 	client := alipanopen.NewClient()
 	client.SetRestyClient(restyClient)
 
+	var defaultFileMode fs.FileMode = 0660
+	if readonly {
+		defaultFileMode = 0440
+	}
 	fs := &FileSystem{
-		clientId:     clientId,
-		clientSecret: clientSecret,
+		clientId:        clientId,
+		clientSecret:    clientSecret,
+		readonly:        readonly,
+		defaultFileMode: defaultFileMode,
 
 		client: client,
 		cache:  cache.New(5*time.Minute, 10*time.Minute),
@@ -108,9 +119,9 @@ func NewFileSystem(config AlipanConfig) (*FileSystem, error) {
 			return nil, err
 		}
 		fs.rootDir = rootDir
-		fs.rootFile = NewFileInfo(rootFolder)
+		fs.rootFile = fs.newFileInfo(rootFolder)
 	} else {
-		fs.rootFile = NewFileInfo(&alipanopen.File{
+		fs.rootFile = fs.newFileInfo(&alipanopen.File{
 			FileName: util.Name,
 			DriveId:  fs.fileDriveId,
 			FileId:   alipanopen.ROOT_FOLDER_ID,
@@ -177,6 +188,10 @@ func (fs *FileSystem) resolve(name string) string {
 	return path.Join(fs.rootDir, name)
 }
 
+func (fs *FileSystem) newFileInfo(file *alipanopen.File) *FileInfo {
+	return NewFileInfo(file, fs.defaultFileMode)
+}
+
 func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, error) {
 	if name == "" || name == "/" {
 		return fs.rootFile, nil
@@ -190,6 +205,14 @@ func (fs *FileSystem) getFile(ctx context.Context, name string) (*FileInfo, erro
 	return file, nil
 }
 
+func (fs *FileSystem) checkReadonly() error {
+	if fs.readonly {
+		return os.ErrPermission
+	}
+
+	return nil
+}
+
 func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) (err error) {
 	defer func() {
 		if err != nil {
@@ -199,6 +222,10 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, perm os.FileMode) 
 		}
 	}()
 	name = fs.resolve(name)
+
+	if err := fs.checkReadonly(); err != nil {
+		return err
+	}
 
 	parentFolderName := path.Dir(name)
 	parentFolder, err := fs.getFile(ctx, parentFolderName)
@@ -246,6 +273,10 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 	name = fs.resolve(name)
 
 	if flag&os.O_CREATE > 0 {
+		if err := fs.checkReadonly(); err != nil {
+			return nil, err
+		}
+
 		fileName := path.Base(name)
 
 		parentFolder, err := fs.getFile(ctx, path.Dir(name))
@@ -253,7 +284,7 @@ func (fs *FileSystem) OpenFile(ctx context.Context, name string, flag int, perm 
 			return nil, errors.Wrap(err, "获取父文件夹失败")
 		}
 
-		file := NewFileInfo(&alipanopen.File{
+		file := fs.newFileInfo(&alipanopen.File{
 			FileName:     fileName,
 			ParentFileId: parentFolder.FileId,
 			DriveId:      parentFolder.DriveId,
@@ -283,6 +314,10 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) (err error) {
 
 	name = fs.resolve(name)
 
+	if err := fs.checkReadonly(); err != nil {
+		return err
+	}
+
 	fs.cleanTrie(name)
 
 	file, err := fs.getFile(ctx, name)
@@ -311,6 +346,10 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) (err 
 
 	oldName = fs.resolve(oldName)
 	newName = fs.resolve(newName)
+
+	if err := fs.checkReadonly(); err != nil {
+		return err
+	}
 
 	fs.cleanTrie(oldName)
 	fs.cleanTrie(newName)
@@ -438,9 +477,9 @@ func (fs *FileSystem) getFileByPath(ctx context.Context, driveId, name string) (
 
 	var fi *FileInfo = nil
 	for _, item := range listFileResp.Items {
-		fs.root.Put(path.Join(dir, item.FileName), NewFileInfo(item))
+		fs.root.Put(path.Join(dir, item.FileName), fs.newFileInfo(item))
 		if item.FileName == fileName {
-			fi = NewFileInfo(item)
+			fi = fs.newFileInfo(item)
 		}
 	}
 
@@ -473,7 +512,7 @@ func (fs *FileSystem) listDir(ctx context.Context, fi *FileInfo) ([]*FileInfo, e
 	files := result.([]*alipanopen.File)
 	fis := make([]*FileInfo, len(files))
 	for idx, file := range files {
-		fis[idx] = NewFileInfo(file)
+		fis[idx] = fs.newFileInfo(file)
 	}
 	return fis, nil
 }
