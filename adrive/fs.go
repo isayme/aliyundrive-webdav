@@ -470,7 +470,7 @@ func (fs *FileSystem) getFileByPath(ctx context.Context, driveId, name string) (
 		ParentFileId: parent.FileId,
 		Limit:        100,
 	}
-	listFileResp, err := fs.client.ListFolder(ctx, reqBody)
+	listFileResp, err := fs.client.ListFile(ctx, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +497,7 @@ func (fs *FileSystem) listDir(ctx context.Context, fi *FileInfo) ([]*FileInfo, e
 			ParentFileId: fi.FileId,
 			Limit:        100,
 		}
-		listFileResp, err := fs.client.ListFolder(ctx, reqBody)
+		listFileResp, err := fs.client.ListFile(ctx, reqBody)
 		if err != nil {
 			return nil, err
 		}

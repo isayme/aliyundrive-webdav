@@ -25,7 +25,7 @@ require (
 	github.com/boltdb/bolt v1.3.1
 	github.com/dghubble/trie v0.0.0-20230729160116-2bc358f28a8b
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
-	github.com/isayme/go-alipanopen v0.4.0
+	github.com/isayme/go-alipanopen v0.4.2
 	github.com/isayme/go-config v0.1.0
 	github.com/mdp/qrterminal/v3 v3.1.1
 	github.com/rs/zerolog v1.26.1 // indirect
