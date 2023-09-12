@@ -16,9 +16,15 @@ func (fs *FileSystem) authIfRequired(ctx context.Context) error {
 		return nil
 	}
 
+	scopes := []string{alipanopen.SCOPE_USER_BASE, alipanopen.SCOPE_FILE_ALL_READ}
+	if !fs.readonly {
+		scopes = append(scopes, alipanopen.SCOPE_FILE_ALL_WRITE)
+	}
+
 	reqBody := &alipanopen.GetQrCodeReq{
 		ClientId:     fs.clientId,
 		ClientSecret: fs.clientSecret,
+		Scopes:       scopes,
 	}
 	qrCodeResp, err := fs.client.GetQrCode(ctx, reqBody)
 	if err != nil {
